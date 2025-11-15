@@ -32,6 +32,28 @@ Some well-known utilities are Windows- or macOS-only. FlashCrucible cannot wrap 
 
 By centering on Linux-compatible tooling, FlashCrucible can wrap mature utilities where possible and fill remaining gaps with native Python implementations or alternative Linux command-line tools.
 
+## Proposed Python Framework & Dependency Stack
+
+FlashCrucible will be delivered as a Python 3.10+ command-line application. The table below enumerates the core runtime dependencies, optional integrations, and build/packaging helpers required to implement the wrapper-centric workflow on Linux (x86_64, arm32, arm64).
+
+| Category | Dependency | Purpose | Notes |
+| --- | --- | --- | --- |
+| CLI Framework | **Typer** (or Click 8.x) | Declarative CLI with subcommands, automatic help, async support | Typer provides modern ergonomics while remaining Click-compatible for ecosystem tooling |
+| Terminal UX | **Rich** | Colored output, progress bars, tables | Used for status dashboards and streaming third-party command logs |
+| Configuration | **Pydantic** (v2) | Structured settings, environment overrides | Supports typed profiles and serialization to JSON/YAML |
+| Concurrency | **AnyIO** | Unified async/sync subprocess management | Facilitates concurrent monitoring of long-running utilities like `fio` |
+| Process Control | **python-dotenv**, **subprocess-tee** | Environment loading, teeing stdout/stderr | Ensures reproducible execution and log capture |
+| Serialization | **PyYAML**, **orjson** | Config/profile parsing and high-performance report dumps | YAML for user-authored plans, JSON for machine interfaces |
+| Logging | **structlog** (or stdlib logging with `rich` handler) | Structured logging routed to files/console | Harmonizes log output across wrapped tools |
+| Packaging | **Poetry** or **Hatch** | Build system, dependency management | Pick one for reproducible envs; both support `pyproject.toml` workflows |
+| Testing | **pytest**, **pytest-mock** | Unit/integration testing | Enable simulation of destructive commands and CLI smoke tests |
+| Linting | **ruff**, **mypy** | Static analysis & formatting | Enforce style consistency and type coverage |
+| OS Integration | **psutil**, **platformdirs** | Device metadata, cache/config paths | psutil aids in resource monitoring; platformdirs stores state per-user |
+| Optional Hardware | **pyudev**, **pyusb** | Advanced device discovery, USB bridge inspection | Gate on availability to avoid breaking lightweight installs |
+| Reporting | **Jinja2** | HTML/Markdown report templates | Converts normalized test results into shareable summaries |
+
+In addition to Python packages, FlashCrucible depends on the Linux-native utilities outlined above (e.g., `fio`, `f3`, `badblocks`, `mmc-utils`, `smartctl`). The CLI should probe for their presence at runtime, provide installation hints (`apt`, `dnf`, `pacman`), and fall back to native Python implementations when binaries are unavailable.
+
 ## Testing
 
 ⚠️ Tests not run (informational documentation update).
