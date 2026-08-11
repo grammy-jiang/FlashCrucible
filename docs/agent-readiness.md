@@ -142,24 +142,20 @@ The tests also check the schemas *constrain* something -- one that accepts anyth
 none, because it implies a check that is not happening -- and that no schema file describes a
 command which no longer exists.
 
-#### F. Long-running operations — *a gap the recent work created*
+#### F. Long-running operations — *done*
 
-`full-capacity-test` on a 128 GB card is hours of I/O. `surface-scan` and `endurance` are worse.
-Every command is currently synchronous, so an agent calling one either blocks past any sane tool
-timeout or kills it mid-write.
+Resolved in [#17](https://github.com/grammy-jiang/FlashCrucible/issues/17). `--detach` starts a run
+in a new session and returns its `run_id` immediately; `tfqa status` reports phase, byte progress,
+and outcome; `tfqa cancel` stops it.
 
-This mattered less when `full-capacity-test` was a stub returning instantly. Now that it does real
-work, it is a live problem.
+State lives in a small JSON file beside the run's JSONL log rather than in a daemon, so it is
+readable from any process and a crashed run still leaves something behind. Writes are atomic, so a
+poller never sees a half-written file. A run marked running whose process has vanished is reported
+as `orphaned` rather than showing progress that will never advance.
 
-What is needed:
-
-- start a run detached, returning a `run_id` immediately;
-- `tfqa status <run_id>` returning progress, phase, and partial metrics;
-- the engines already accept a `progress` callback, so the plumbing exists;
-- a documented cancellation path that leaves the device in a known state.
-
-*Effort: medium-to-large. Value: high — without it, the agent story breaks on exactly the commands
-that take real time.*
+Cancellation is honest about consequences: a run stopped mid-write leaves the device partially
+written, and `wrote_to_device` records whether it had started, so neither `cancel` nor `status`
+leaves that to be inferred.
 
 #### F2. Stop the engines inventing measurements — *done*
 
@@ -215,7 +211,7 @@ Each item below is tracked as a GitHub issue, collected under
 | ~~1~~ | ~~**G**~~ | [#14](https://github.com/grammy-jiang/FlashCrucible/issues/14) | **Done** — Small; removes guesswork for callers |
 | ~~2~~ | ~~**A**~~ | [#15](https://github.com/grammy-jiang/FlashCrucible/issues/15) | **Done** — found five mislabelled commands on its first run |
 | ~~3~~ | ~~**E**~~ | [#16](https://github.com/grammy-jiang/FlashCrucible/issues/16) | **Done** — found a plan-key inconsistency on its first run |
-| 4 | **F** | [#17](https://github.com/grammy-jiang/FlashCrucible/issues/17) | Fixes the synchronous-only limitation |
+| ~~4~~ | ~~**F**~~ | [#17](https://github.com/grammy-jiang/FlashCrucible/issues/17) | **Done** — detach, status, cancel |
 | 5 | **H** | [#18](https://github.com/grammy-jiang/FlashCrucible/issues/18) | Only once E and F are done |
 | — | **D** | [#19](https://github.com/grammy-jiang/FlashCrucible/issues/19) | Optional; worth it only for the critical predicates |
 

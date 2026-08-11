@@ -5,11 +5,15 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import uuid
+import subprocess
+import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Event, Thread
 from time import monotonic, sleep
-from typing import Any, Literal, Sequence, cast
+from typing import Any, Callable, Literal, Sequence, cast
 
 import click
 import typer
@@ -25,6 +29,7 @@ from tfqa.core import config as cfg_mod
 from tfqa.core import devices as devices_mod
 from tfqa.core import logging as logging_mod
 from tfqa.core import paths
+from tfqa.core import runstate
 from tfqa.core import safety as safety_mod
 from tfqa.core.errors import ArgumentError, TFQAError, get_exit_code
 from tfqa.core.models import (
@@ -114,6 +119,15 @@ _TOOL_REQUIREMENTS: dict[str, dict[str, Any]] = {
     "full-capacity-test": {
         "degradation": "Native implementation; needs write access to the block device.",
     },
+    "status": {
+        "degradation": "Reads run state files; needs no external tool.",
+    },
+    "cancel": {
+        "degradation": (
+            "Signals the recorded process. A run stopped mid-write leaves the "
+            "device partially written; check `wrote_to_device`."
+        ),
+    },
     "pipeline": {
         "degradation": (
             "A stage whose tool is missing is recorded as skipped; the rest of "
@@ -138,6 +152,15 @@ _DESCRIBE_OVERRIDES: dict[str, dict[str, Any]] = {
     "detect": {"destructive": False, "requires_root": False},
     "health": {"destructive": False, "requires_root": False},
     "history": {"destructive": False, "requires_root": False},
+    "status": {"destructive": False, "requires_root": False},
+    "cancel": {
+        "destructive": False,
+        "requires_root": False,
+        "destructive_when": (
+            "never itself, but stopping a run mid-write leaves the device "
+            "partially written"
+        ),
+    },
     "endurance": {
         "destructive": False,
         "requires_root": False,
@@ -416,6 +439,110 @@ def _emit_dry_run(
     print(f"Plan: {plan}")
 
 
+DETACH_HELP = (
+    "Start the run in the background and print its run_id immediately. "
+    "Follow it with `tfqa status <run_id>`."
+)
+
+
+def _detach(ctx: typer.Context, run_id: str, log_dir: Path | None) -> int:
+    """Re-run this invocation in a child process, without --detach.
+
+    Returns the child pid. The parent records the run and exits, so a caller
+    driving the CLI is not held open for the hours a full-span write takes.
+    """
+
+    argv = [arg for arg in sys.argv[1:] if arg not in ("--detach", "--background")]
+    child_environment = {**os.environ, "TFQA_RUN_ID": run_id}
+    if log_dir:
+        child_environment["TFQA_LOG_DIR"] = str(log_dir)
+    process = subprocess.Popen(  # noqa: S603 - re-running ourselves, not user input
+        [sys.executable, "-m", "tfqa.cli.main", *argv],
+        env=child_environment,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    return process.pid
+
+
+def _begin_run(
+    command_name: str,
+    run_id: str,
+    device_path: str | None,
+    log_dir: Path | None,
+    *,
+    pid: int | None = None,
+    total_bytes: int = 0,
+) -> runstate.RunStatus:
+    tracked_pid = pid if pid is not None else os.getpid()
+    status = runstate.RunStatus(
+        run_id=run_id,
+        command=command_name,
+        device_path=device_path,
+        pid=tracked_pid,
+        # Distinguishes this process from a later reuse of its pid, so cancel
+        # cannot signal a stranger.
+        pid_start=runstate.process_start_ticks(tracked_pid),
+        total_bytes=total_bytes,
+    )
+    runstate.write(status, log_dir)
+    return status
+
+
+def _finish_run(
+    status: runstate.RunStatus,
+    log_dir: Path | None,
+    *,
+    state: runstate.RunState,
+    message: str | None = None,
+    error_code: str | None = None,
+    metrics: dict[str, Any] | None = None,
+) -> None:
+    status.state = state
+    status.finished_at = time.time()
+    status.message = message
+    status.error_code = error_code
+    if metrics:
+        # `isinstance(True, int)` is true, so flags would otherwise be recorded
+        # as measurements.
+        status.metrics = {
+            k: v
+            for k, v in metrics.items()
+            if isinstance(v, (int, float)) and not isinstance(v, bool)
+        }
+    runstate.write(status, log_dir)
+
+
+def _progress_recorder(
+    status: runstate.RunStatus, log_dir: Path | None, passes: int = 1
+) -> Callable[[int, int, str], None]:
+    """Persist progress across every pass, throttled to spare the disk.
+
+    A run that writes and then verifies covers the span twice. Treating one
+    span as the whole job reported 100% when writing finished and then dropped
+    back to nearly zero when verification began, so the total accounts for all
+    passes and each pass contributes its own slice.
+    """
+
+    last = [0.0]
+    seen: dict[str, int] = {}
+
+    def record(done: int, total: int, phase: str = "working") -> None:
+        seen[phase] = done
+        status.phase = phase
+        status.completed_bytes = sum(seen.values())
+        status.total_bytes = total * passes
+        if phase == "write" and done > 0:
+            status.wrote_to_device = True
+        now = time.time()
+        if now - last[0] >= 1.0 or status.completed_bytes >= status.total_bytes:
+            last[0] = now
+            runstate.write(status, log_dir)
+
+    return record
+
+
 def _assert_device_safe(
     ctx: typer.Context,
     device: DeviceInfo,
@@ -548,7 +675,15 @@ def _build_cli_overrides(
 
 
 def _generate_run_id() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    """A run id unique enough to name a durable state file.
+
+    Second-granularity alone collided: two runs started in the same second
+    shared a state file, so `status` and `cancel` acted on whichever wrote
+    last. Concurrent runs on different devices were enough to trigger it.
+    """
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"{stamp}-{uuid.uuid4().hex[:8]}"
 
 
 def _build_log_path(log_dir: Path | None, run_id: str | None) -> Path | None:
@@ -1753,6 +1888,7 @@ def full_capacity_test(
     seed: int = typer.Option(
         0, "--seed", help="Pattern seed; change it to re-test with fresh data."
     ),
+    detach: bool = typer.Option(False, "--detach", help=DETACH_HELP),
 ) -> None:
     """Run a destructive full-span write+verify test."""
 
@@ -1798,13 +1934,77 @@ def full_capacity_test(
             return
 
         _assert_device_safe(ctx, target_device, force, confirmed=actual_yes)
-        payload = full_capacity.run_full_capacity(
-            target_device,
-            force=force,
-            yes=actual_yes,
-            block_size=block_size,
-            limit_bytes=limit_bytes,
-            seed=seed,
+
+        # A full span on a large card is hours of I/O. Detaching lets a caller
+        # start it and poll `tfqa status` instead of holding a connection open
+        # past every sane timeout.
+        run_id = os.environ.get("TFQA_RUN_ID") or _generate_run_id()
+        span = (
+            min(target_device.size_bytes, limit_bytes)
+            if limit_bytes is not None
+            else target_device.size_bytes
+        )
+        if detach:
+            child = _detach(ctx, run_id, _config.log_dir)
+            _begin_run(
+                command_name,
+                run_id,
+                target_device.path,
+                _config.log_dir,
+                pid=child,
+                total_bytes=span,
+            )
+            started = CLIResponse(
+                status="ok",
+                command=command_name,
+                run_id=run_id,
+                device={"path": target_device.path},
+                message=f"Started in the background as {run_id}.",
+                data={"run_id": run_id, "pid": child, "detached": True},
+            )
+            if actual_output == "json":
+                print(started.model_dump_json())
+            else:
+                print(started.message)
+                print(f"Follow it with: tfqa status {run_id}")
+            return
+
+        tracked = _begin_run(
+            command_name,
+            run_id,
+            target_device.path,
+            _config.log_dir,
+            total_bytes=span,
+        )
+        try:
+            payload = full_capacity.run_full_capacity(
+                target_device,
+                force=force,
+                yes=actual_yes,
+                block_size=block_size,
+                limit_bytes=limit_bytes,
+                seed=seed,
+                # write then verify: two passes over the span.
+                progress=_progress_recorder(tracked, _config.log_dir, passes=2),
+            )
+        except BaseException as exc:
+            # Recorded and re-raised, never swallowed. Catching only TFQAError
+            # left a run that died on an OSError marked "running" forever,
+            # since nothing else would ever update its state.
+            _finish_run(
+                tracked,
+                _config.log_dir,
+                state="cancelled" if isinstance(exc, KeyboardInterrupt) else "failed",
+                message=getattr(exc, "message", None) or str(exc),
+                error_code=getattr(exc, "error_code", None),
+            )
+            raise
+        _finish_run(
+            tracked,
+            _config.log_dir,
+            state="completed" if payload.get("status") == "ok" else "failed",
+            message=str(payload.get("message") or ""),
+            metrics={k: v for k, v in payload.items() if isinstance(v, (int, float))},
         )
         status: Literal["ok", "fail"] = payload.get("status", "ok")
         default_message = (
@@ -1813,7 +2013,6 @@ def full_capacity_test(
             else "Full capacity test reported issues."
         )
         message = payload.get("message") or default_message
-        run_id = _generate_run_id()
         data: dict[str, object] = dict(payload)
         data["device"] = {"path": target_device.path}
         log_path = _build_log_path(_config.log_dir, run_id)
@@ -3191,6 +3390,126 @@ def _print_sdmon_details(details: dict[str, object]) -> None:
             "enclosure), not the card's CID register. Attach the card to an MMC "
             "host controller to read its CID."
         )
+
+
+@app.command(name="status")
+def status_command(
+    ctx: typer.Context,
+    run_id: str | None = typer.Argument(None, help="Run to report on."),
+    limit: int = typer.Option(20, "--limit", help="How many runs to list."),
+    output: str | None = typer.Option(None, "--output", "-o", help=OUTPUT_HELP),
+) -> None:
+    """Report on a background run, or list recent runs."""
+
+    command_name = "status"
+    try:
+        actual_output = _resolve_output(ctx, output)
+        _config = _ensure_config(ctx)
+
+        if run_id:
+            found = runstate.read(run_id, _config.log_dir)
+            data: dict[str, Any] = {"run": found.to_dict()}
+            message = f"Run {run_id} is {found.state}."
+        else:
+            runs = runstate.list_runs(_config.log_dir, limit=limit)
+            data = {"runs": [entry.to_dict() for entry in runs]}
+            message = f"{len(runs)} run(s) recorded."
+
+        resp = CLIResponse(
+            status="ok", command=command_name, message=message, data=data
+        )
+        if actual_output == "json":
+            print(resp.model_dump_json())
+            return
+
+        print(resp.message)
+        entries = [data["run"]] if run_id else data["runs"]
+        for entry in entries:
+            percent = entry.get("percent")
+            progress = f" {percent}%" if percent is not None else ""
+            print(
+                f"- {entry['run_id']}  {entry['command']}  {entry['state']}{progress}"
+            )
+            if entry.get("phase"):
+                print(f"    phase: {entry['phase']}")
+            if entry.get("message"):
+                print(f"    {entry['message']}")
+            if entry.get("wrote_to_device") and entry["state"] != "completed":
+                print("    warning: this run wrote to the device before stopping")
+
+    except TFQAError as e:
+        resp = CLIResponse(
+            status="error",
+            command=command_name,
+            message=e.message,
+            error_code=e.error_code,
+            data={"details": e.details},
+        )
+        print(resp.model_dump_json())
+        raise SystemExit(get_exit_code(e.error_code))
+
+
+@app.command(name="cancel")
+def cancel_command(
+    ctx: typer.Context,
+    run_id: str = typer.Argument(..., help="Run to stop."),
+    output: str | None = typer.Option(None, "--output", "-o", help=OUTPUT_HELP),
+) -> None:
+    """Stop a background run.
+
+    A run interrupted mid-write leaves the device partially written; the
+    reported state records whether it had started writing.
+    """
+
+    command_name = "cancel"
+    try:
+        actual_output = _resolve_output(ctx, output)
+        _config = _ensure_config(ctx)
+        cancelled = runstate.cancel(run_id, _config.log_dir)
+
+        # The resulting state is reported, not assumed. A pid that had already
+        # exited leaves the run orphaned, and a process still finishing a write
+        # is still running -- calling either "cancelled" would be a lie.
+        # "ok" means the run is no longer running, however it got there. A
+        # process that ignored SIGTERM is the one case the caller must act on.
+        stopped = cancelled.state != "running"
+        outcome = {
+            "cancelled": f"Run {run_id} cancelled.",
+            "orphaned": (f"Run {run_id} was already gone; nothing was signalled."),
+            "running": (
+                f"Run {run_id} was asked to stop but is still running. "
+                "It may be finishing a write; check again shortly."
+            ),
+        }
+        resp = CLIResponse(
+            status="ok" if stopped else "fail",
+            command=command_name,
+            run_id=run_id,
+            message=outcome.get(cancelled.state, f"Run {run_id} is {cancelled.state}."),
+            data={"run": cancelled.to_dict()},
+        )
+        if actual_output == "json":
+            print(resp.model_dump_json())
+        else:
+            print(resp.message)
+            if cancelled.wrote_to_device:
+                print(
+                    "This run had already written to the device. Its contents "
+                    "are partial; re-flash or re-test before trusting the card."
+                )
+        if not stopped:
+            raise SystemExit(1)
+
+    except TFQAError as e:
+        resp = CLIResponse(
+            status="error",
+            command=command_name,
+            message=e.message,
+            error_code=e.error_code,
+            data={"details": e.details},
+        )
+        print(resp.model_dump_json())
+        raise SystemExit(get_exit_code(e.error_code))
 
 
 @app.command(name="capabilities")

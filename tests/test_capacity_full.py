@@ -275,19 +275,22 @@ class Options(TempDirCase):
 
     def test_progress_is_reported_for_both_passes(self):
         target = make_target(self.root)
-        seen: list[tuple[int, int]] = []
+        seen: list[tuple[int, int, str]] = []
         full.run_full_capacity(
             make_device(target),
             force=True,
             yes=True,
             block_size=BLOCK,
-            progress=lambda done, total: seen.append((done, total)),
+            progress=lambda done, total, phase: seen.append((done, total, phase)),
         )
 
         self.assertTrue(seen)
-        self.assertEqual(seen[-1], (SPAN, SPAN))
+        self.assertEqual(seen[-1], (SPAN, SPAN, "verify"))
         # Write pass plus verify pass.
         self.assertEqual(len(seen), 2 * (SPAN // BLOCK))
+        # Each pass names itself, so a caller can account for them separately
+        # instead of watching progress reach 100% and then fall back to zero.
+        self.assertEqual({phase for _done, _total, phase in seen}, {"write", "verify"})
 
     def test_max_mismatches_caps_the_report(self):
         target = make_target(self.root)

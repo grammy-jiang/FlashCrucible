@@ -147,6 +147,26 @@
                   }
                 },
                 "additionalProperties": true
+              },
+              {
+                "type": "object",
+                "description": "Emitted by --detach: the run was started in the background and has produced no result yet. Poll `tfqa status <run_id>` for the outcome.",
+                "required": [
+                  "run_id",
+                  "detached"
+                ],
+                "properties": {
+                  "run_id": {
+                    "type": "string"
+                  },
+                  "pid": {
+                    "type": "integer"
+                  },
+                  "detached": {
+                    "const": true
+                  }
+                },
+                "additionalProperties": true
               }
             ]
           }

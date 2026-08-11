@@ -56,6 +56,7 @@ commands and read the same results.
 | `filesystem-check` | Run `fsck` against the filesystem | Only with `--force` |
 | `health` | Read CID / wear registers (sysfs, `mmc extcsd`, `sdmon`) | No |
 | `pipeline` | Run several stages as one orchestrated run | **Yes** |
+| `status`, `cancel` | Follow or stop a background run | No |
 | `combos`, `profiles` | List curated workflows and endurance presets | No |
 | `describe`, `describe-schemas` | Machine-readable command and schema discovery | No |
 | `validate-schemas`, `lint-schemas` | Check the shipped JSON schemas | No |
@@ -173,6 +174,28 @@ predict a refusal that does not apply.
 
 A dry run applies the same argument validation as a real run, so it will not hand back a plan the
 real invocation would reject (`--mode typo`, `--duration 0`, `--file-count 0`, …).
+
+### Long-running tests
+
+`full-capacity-test` on a large card is hours of I/O. Start it detached and poll instead of
+holding a connection open:
+
+```bash
+uv run tfqa --yes full-capacity-test --device /dev/sdX --force --detach
+# {"run_id": "20260811T093157Z", "pid": 4321, "detached": true}
+
+uv run tfqa status 20260811T093157Z
+uv run tfqa status                    # every recent run
+uv run tfqa cancel 20260811T093157Z
+```
+
+The run records phase, byte progress, and its outcome to a state file beside its JSONL log, so
+`status` works from any process and a crashed run still leaves something readable. A run whose
+process has vanished without recording an outcome is reported as `orphaned` rather than showing
+progress that will never advance.
+
+A run stopped mid-write leaves the device partially written. `wrote_to_device` records whether it
+had started, and both `cancel` and `status` say so rather than leaving you to infer it.
 
 ## Automation and AI
 
