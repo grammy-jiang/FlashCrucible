@@ -208,6 +208,26 @@ class TestPipelineRecordsSkippedNotOk:
             with pytest.raises(TimeoutError):
                 pipeline_mod.run_pipeline(_context(), [stage])
 
+    @pytest.mark.parametrize(
+        "stage,target",
+        [
+            ("quick-test", "tfqa.tests.capacity.quick.check_tool"),
+            ("filesystem-check", "tfqa.ext.fsck.shutil.which"),
+        ],
+    )
+    def test_every_stage_is_skipped_not_just_some(
+        self, stage: str, target: str
+    ) -> None:
+        # The catch used to live in three stage wrappers, so quick-test and
+        # filesystem-check -- both in the default plan -- stopped the run on a
+        # bare host instead of being skipped.
+        built = pipeline_mod.build_pipeline(PROFILE, [stage])[0]
+        with patch(target, side_effect=ToolNotFoundError("tool")):
+            (result,) = pipeline_mod.run_pipeline(_context(), [built])
+
+        assert result.status == "skipped"
+        assert result.metrics == {}
+
     def test_a_skipped_stage_contributes_no_metrics_to_trends(self) -> None:
         # The whole point: an unavailable engine must not put a number into the
         # history that `trends` would then average.

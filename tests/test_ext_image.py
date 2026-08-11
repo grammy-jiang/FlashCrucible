@@ -1,5 +1,7 @@
 import subprocess
 import unittest
+
+import pytest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, cast
@@ -88,3 +90,50 @@ class TestImageFlash(unittest.TestCase):
         ):
             with self.assertRaises(TimeoutError):
                 run_image_flash(str(image_path), "/dev/test")
+
+
+def test_missing_cmp_is_detected_before_the_device_is_written(tmp_path) -> None:
+    """A host without cmp must not overwrite the card and *then* fail.
+
+    `_ensure_tool(CMP_TOOL)` used to run after dd, so the device was flashed
+    and only then did the caller get an environment error -- for a card that
+    could no longer be verified and had already been overwritten.
+    """
+    image = tmp_path / "img.bin"
+    image.write_text("data")
+    ran: list[list[str]] = []
+
+    def only_cmp_missing(name: str) -> str | None:
+        return None if name == "cmp" else f"/usr/bin/{name}"
+
+    def record(cmd, *args, **kwargs):  # type: ignore[no-untyped-def]
+        ran.append(cmd)
+        raise AssertionError("nothing may run before the cmp check")
+
+    with (
+        patch("shutil.which", side_effect=only_cmp_missing),
+        patch("subprocess.run", side_effect=record),
+        pytest.raises(ToolNotFoundError),
+    ):
+        run_image_flash(str(image), "/dev/sdz")
+
+    assert ran == [], "dd ran before the missing cmp was detected"
+
+
+def test_no_verify_flashes_without_cmp(tmp_path) -> None:
+    image = tmp_path / "img.bin"
+    image.write_text("data")
+
+    def only_cmp_missing(name: str) -> str | None:
+        return None if name == "cmp" else f"/usr/bin/{name}"
+
+    completed = subprocess.CompletedProcess(
+        args=["dd"], returncode=0, stdout="", stderr=""
+    )
+    with (
+        patch("shutil.which", side_effect=only_cmp_missing),
+        patch("subprocess.run", return_value=completed),
+    ):
+        result = run_image_flash(str(image), "/dev/sdz", verify=False)
+
+    assert result["status"] == "ok"

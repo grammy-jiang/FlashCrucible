@@ -10,7 +10,7 @@ Prerequisites
 Quickstart
 
 ```bash
-uv sync              # create venv and install dependencies
+make install         # create venv and install dependencies
 uv run tfqa --help   # run CLI entrypoint
 ```
 
@@ -30,17 +30,12 @@ pre-commit run --all-files
 Testing & Quality
 
 ```bash
-# Run all tests
-uv run pytest tests/
-
-# Lint & format
-uv run ruff check .              # Check linting issues
-uv run ruff format .             # Auto-format code
-uv run ruff check . --fix        # Fix auto-fixable issues
-
-# Type checking
-uv run mypy tfqa/ tests/
+make verify      # everything CI runs: lint, format, types, tests, hermetic tests, schemas
+make format      # apply formatting and autofixes
+make help        # list the individual targets
 ```
+
+CI runs `make verify`, so there is one definition of "green".
 
 Agent-specific notes
 

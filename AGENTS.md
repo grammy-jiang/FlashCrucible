@@ -13,17 +13,16 @@ uv sync
 uv run tfqa --help
 ```
 
-Before opening a pull request, all of these must pass:
+Before opening a pull request:
 
 ```bash
-uv run ruff check .              # lint
-uv run ruff format --check .     # formatting (CI fails on any diff)
-uv run mypy tfqa/ tests/         # types
-uv run pytest -q                 # tests
-uv run tfqa validate-schemas     # the shipped JSON schemas parse
+make verify
 ```
 
-`ruff format` is enforced by its own CI job, so run `uv run ruff format .` before pushing.
+That is the single gate: lint, formatting, types, the tests, the same tests with every external
+tool hidden, and the shipped JSON schemas. CI runs the same target, so a local pass and a green
+build cannot mean different things. `make help` lists the individual targets, and `make format`
+applies formatting and autofixes.
 
 ## The rules that matter here
 
@@ -101,18 +100,7 @@ The suite must pass on a machine with none of the external tools installed. Patc
 not just the function that uses it — three CLI tests once passed only because `f3probe` happened
 to be installed locally, and broke in CI.
 
-Verify with:
-
-```bash
-uv run python - <<'PY'
-import unittest.mock as m, shutil, pytest
-HIDE = {"f3probe","f3write","f3read","badblocks","fio","mmc","sdmon","smartctl",
-        "dd","cmp","fsck","e2fsck","fsck.vfat","fsck.exfat","blkdiscard","hdparm","stress-ng"}
-real = shutil.which
-with m.patch("shutil.which", lambda c, *a, **k: None if str(c).split("/")[-1] in HIDE else real(c, *a, **k)):
-    raise SystemExit(pytest.main(["-q", "tests/"]))
-PY
-```
+Verify with `make test-hermetic`, which is part of `make verify` and runs in CI.
 
 ### 8. A regression test must fail against the old code
 

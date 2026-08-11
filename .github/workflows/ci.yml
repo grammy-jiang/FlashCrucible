@@ -6,7 +6,7 @@ on:
     branches: [ master ]
 
 jobs:
-  test:
+  verify:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -22,17 +22,12 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@v3
 
-    - name: Sync dependencies
-      run: uv sync
+    - name: Install dependencies
+      run: make install
 
-    - name: Lint
-      run: uv run ruff check .
-
-    - name: Type check
-      run: uv run mypy tfqa/ tests/
-
-    - name: Run tests
-      run: uv run pytest -q
-
-    - name: Validate JSON schemas
-      run: uv run tfqa validate-schemas --output json
+    # One target, so CI and a local run cannot drift. `make verify` covers
+    # lint, formatting, types, the tests, the same tests with every external
+    # tool hidden, and the shipped JSON schemas. The failing target is named in
+    # the output. See the Makefile.
+    - name: Verify
+      run: make verify

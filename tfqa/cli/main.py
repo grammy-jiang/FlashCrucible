@@ -73,6 +73,55 @@ app = typer.Typer(name=APP_NAME, help="FlashCrucible CLI for storage QA.")
 config_app = typer.Typer(name="config", help="Inspect or validate config.")
 app.add_typer(config_app, name="config", help="Configuration helpers.")
 
+# Which external tools each command needs, and what happens when one is absent.
+# `capabilities` reports which tools this host has; without this an agent had to
+# know independently that a missing fio affects `performance`.
+_TOOL_REQUIREMENTS: dict[str, dict[str, Any]] = {
+    "quick-test": {
+        "required_tools": ["f3probe"],
+        "degradation": "Fails with EXT_TOOL_MISSING; there is no fallback.",
+    },
+    "performance": {
+        "required_tools": ["fio"],
+        "degradation": "Fails with EXT_TOOL_MISSING rather than estimating throughput.",
+    },
+    "surface-scan": {
+        "required_tools": ["badblocks"],
+        "degradation": "Fails with EXT_TOOL_MISSING rather than estimating coverage.",
+    },
+    "filesystem-check": {
+        "required_tools": ["fsck"],
+        "degradation": "Fails with EXT_TOOL_MISSING.",
+    },
+    "image-flash": {
+        "required_tools": ["dd"],
+        "optional_tools": ["cmp"],
+        "degradation": (
+            "Without cmp, fails with EXT_TOOL_MISSING before writing anything; "
+            "pass --no-verify to flash without verification."
+        ),
+    },
+    "health": {
+        "optional_tools": ["mmc", "sdmon"],
+        "degradation": (
+            "Reports available: false with a per-source reason; identity still "
+            "comes from sysfs."
+        ),
+    },
+    "endurance": {
+        "degradation": "Always fails with NOT_IMPLEMENTED; the engine does no device I/O.",
+    },
+    "full-capacity-test": {
+        "degradation": "Native implementation; needs write access to the block device.",
+    },
+    "pipeline": {
+        "degradation": (
+            "A stage whose tool is missing is recorded as skipped; the rest of "
+            "the plan still runs."
+        ),
+    },
+}
+
 _DESCRIBE_OVERRIDES: dict[str, dict[str, Any]] = {
     "automation-report": {"destructive": False, "requires_root": False},
     CONFIG_SHOW_COMMAND_NAME: {"destructive": False, "requires_root": False},
@@ -149,6 +198,10 @@ def _describe_click_command(full_name: str, command: click.Command) -> dict[str,
         "options": [],
     }
     metadata.update(_DESCRIBE_OVERRIDES.get(full_name, {}))
+    requirements = _TOOL_REQUIREMENTS.get(full_name, {})
+    metadata["required_tools"] = list(requirements.get("required_tools", []))
+    metadata["optional_tools"] = list(requirements.get("optional_tools", []))
+    metadata["degradation"] = requirements.get("degradation")
     for param in command.params:
         descriptor = _describe_click_param(param)
         if isinstance(param, click.Option):
