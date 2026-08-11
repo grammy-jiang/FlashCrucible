@@ -9,6 +9,10 @@ which need different things:
 The working agreement for the first group lives in [AGENTS.md](../AGENTS.md). This document is the
 gap analysis behind it.
 
+**Status: every item identified here is done** ([#11](https://github.com/grammy-jiang/FlashCrucible/issues/11)–[#19](https://github.com/grammy-jiang/FlashCrucible/issues/19)).
+It is kept as the reasoning, not as a to-do list — in particular the premise below, which is why
+the work was ordered the way it was.
+
 ---
 
 ## The premise
@@ -70,9 +74,14 @@ Verified by adding an unguarded `--device` command and watching three checks fai
 
 #### B. Hermetic-tools CI job
 
-The "hide all 16 external binaries" run has been executed by hand on every pull request in this
+The "hide every external binary" run has been executed by hand on every pull request in this
 series, and it caught a real host dependency that CI missed. It is currently one person's
 discipline. It should be a CI job.
+
+**Done** in [#12](https://github.com/grammy-jiang/FlashCrucible/issues/12). `pytest --hermetic`
+hides all 17 binaries from `shutil.which`, and it runs in CI as part of `make verify` rather than
+as a separate job — one target means the hermetic run cannot be skipped without skipping
+everything.
 
 *Effort: small. Value: high — it already caught something.*
 
@@ -82,6 +91,9 @@ Five separate commands must pass before a PR. Agents get the set subtly wrong �
 `ruff format` instead of `ruff format --check`, or skipping schema validation. A single
 `make verify` (or `uv run poe verify`) removes the guesswork and gives CI and local runs one
 definition.
+
+**Done** in [#13](https://github.com/grammy-jiang/FlashCrucible/issues/13). `make verify` is what
+CI runs, so the two cannot drift.
 
 *Effort: small. Value: moderate, mostly in reduced friction.*
 
@@ -189,6 +201,10 @@ independently, which means hardcoding what the CLI already knows.
 Each command should declare its required and optional tools and what happens when they are absent.
 Small change, removes a class of guesswork.
 
+**Done** in [#14](https://github.com/grammy-jiang/FlashCrucible/issues/14). `describe` now reports
+`required_tools`, `optional_tools`, and `degradation`, and the MCP tool descriptions are generated
+from them.
+
 *Effort: small. Value: moderate.*
 
 #### H. MCP server
@@ -223,10 +239,11 @@ Each item below is tracked as a GitHub issue, collected under
 | ~~2~~ | ~~**A**~~ | [#15](https://github.com/grammy-jiang/FlashCrucible/issues/15) | **Done** — found five mislabelled commands on its first run |
 | ~~3~~ | ~~**E**~~ | [#16](https://github.com/grammy-jiang/FlashCrucible/issues/16) | **Done** — found a plan-key inconsistency on its first run |
 | ~~4~~ | ~~**F**~~ | [#17](https://github.com/grammy-jiang/FlashCrucible/issues/17) | **Done** — detach, status, cancel |
-| 5 | **H** | [#18](https://github.com/grammy-jiang/FlashCrucible/issues/18) | Only once E and F are done |
-| — | **D** | [#19](https://github.com/grammy-jiang/FlashCrucible/issues/19) | Optional; worth it only for the critical predicates |
+| ~~5~~ | ~~**H**~~ | [#18](https://github.com/grammy-jiang/FlashCrucible/issues/18) | **Done** — `tfqa mcp-server`, built after E and F as planned |
+| ~~—~~ | ~~**D**~~ | [#19](https://github.com/grammy-jiang/FlashCrucible/issues/19) | **Done** — five predicates, ~3s |
 
-Phase 1 items are independent of each other and can be done in any order.
+Every item is done. What follows is kept because the reasoning still applies to the next thing
+someone is tempted to add.
 
 ## What not to do
 
