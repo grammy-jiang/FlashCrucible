@@ -1,5 +1,13 @@
 # FlashCrucible
 
+[![CI](https://github.com/grammy-jiang/FlashCrucible/actions/workflows/ci.yml/badge.svg)](https://github.com/grammy-jiang/FlashCrucible/actions/workflows/ci.yml)
+[![Format](https://github.com/grammy-jiang/FlashCrucible/actions/workflows/format.yml/badge.svg)](https://github.com/grammy-jiang/FlashCrucible/actions/workflows/format.yml)
+[![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/grammy-jiang/FlashCrucible/blob/master/LICENSE)
+[![Linting: ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![Checked with mypy](https://img.shields.io/badge/mypy-checked-2a6db2.svg)](https://mypy-lang.org/)
+[![Platform: Linux](https://img.shields.io/badge/platform-linux-lightgrey.svg)](#platform-support)
+
 **A Linux command-line tool for testing microSD / TF cards.** It tells you whether a card is
 counterfeit, whether its surface is failing, how fast it really is, and how much life it has left.
 
@@ -12,9 +20,11 @@ uv run tfqa capabilities              # which test tools does this host have?
 uv run tfqa quick-test --device /dev/sdX --dry-run
 ```
 
-> **Status: early development.** The CLI surface, JSON schemas, safety guardrails, and test
-> harness are real and working. Read [Safety](#safety) and
-> [Known limitations](#known-limitations) before pointing this at a card you care about.
+> **Status: alpha.** 23 commands, 324 tests, typed and linted in CI. The safety guardrails,
+> dry-run previews, and JSON contract all do what they say, and `health` reports what it cannot
+> read rather than guessing. One exception remains: `performance` synthesises throughput figures
+> when `fio` is absent — see [Known limitations](#known-limitations). Read [Safety](#safety) and
+> that list before pointing this at a card you care about.
 
 ---
 
@@ -250,21 +260,40 @@ Recognised environment variables: `TFQA_MODE`, `TFQA_LOG_DIR`, `TFQA_NON_INTERAC
 
 ```bash
 uv sync                          # create venv, install deps
-uv run pytest -q                 # 174 tests, ~1s
+uv run pytest -q                 # 324 tests, ~1.5s
 uv run ruff check .              # lint
 uv run ruff format .             # format
 uv run mypy tfqa/ tests/         # type check
 uv run tfqa validate-schemas     # check the JSON schemas parse
 ```
 
-CI runs all five on every push and pull request. See [CONTRIBUTING.md](CONTRIBUTING.md).
+CI runs all of these on every push and pull request. See [CONTRIBUTING.md](https://github.com/grammy-jiang/FlashCrucible/blob/master/CONTRIBUTING.md), and
+[AGENTS.md](https://github.com/grammy-jiang/FlashCrucible/blob/master/AGENTS.md) if you are an AI agent working in this repository.
 
-CLI tests use Typer's `CliRunner` with `unittest.mock.patch` to stub device access, so the suite
-never touches real hardware.
+The suite never touches real hardware. CLI tests use Typer's `CliRunner` with
+`unittest.mock.patch` to stub device access, and the engine tests write to temporary files
+standing in for block devices. It also passes with every external binary hidden from
+`shutil.which`, so a missing `f3probe` or `fio` cannot make a test pass or fail by accident.
 
 ## Known limitations
 
-Honest list of what is constrained. Contributions welcome.
+### Known defect
+
+**`performance` synthesises throughput when `fio` is missing.** Both engines fall back to figures
+derived from device properties — a flat `240.0` for removable devices in
+`tfqa/tests/performance/basic.py:80`, a computed value in `random.py:125` — and return
+`status: "ok"`. The numbers land in `metrics`, which is what `trends` aggregates, while the
+`mode: "simulated"` marker sits in `details`, which `trends` never reads. So a figure that was
+never measured can appear in a throughput trend, indistinguishable from a real one.
+
+Until it is fixed: run `tfqa capabilities` to confirm `fio` is installed, or check
+`data.details.mode` before believing a `performance` result. This is the same class of problem as
+the fabricated health data that has since been removed, and it is next on the list — see
+[docs/agent-readiness.md](https://github.com/grammy-jiang/FlashCrucible/blob/master/docs/agent-readiness.md).
+
+### Constraints
+
+These are inherent rather than defects. Contributions welcome.
 
 1. **Health data needs the right hardware.** Wear data comes from eMMC `EXT_CSD` registers
    (usually root) or from `sdmon` on industrial SD cards. A consumer card in a USB reader can
@@ -280,15 +309,25 @@ Honest list of what is constrained. Contributions welcome.
 
 | Document | What it covers |
 | --- | --- |
-| [docs/cli-guide.md](docs/cli-guide.md) | Detailed notes on individual commands, payloads, and automation hooks |
-| [docs/tool-wrapping-strategy.md](docs/tool-wrapping-strategy.md) | Which external tools are wrapped, and what must be built natively |
-| [docs/design-v0-structure.md](docs/design-v0-structure.md) | Module and package architecture |
-| [docs/design-v0-details.md](docs/design-v0-details.md) | Detailed design notes |
-| [docs/features-roadmap-v0.md](docs/features-roadmap-v0.md) | Feature priorities and phase plan |
-| [docs/sd-tools-study-v0.md](docs/sd-tools-study-v0.md) | Survey of existing microSD test tools |
-| [docs/ux-v0.md](docs/ux-v0.md) | CLI UX requirements |
-| [docs/phase3-4-plan.md](docs/phase3-4-plan.md) | Endurance, orchestration, and automation work plan |
+| [docs/cli-guide.md](https://github.com/grammy-jiang/FlashCrucible/blob/master/docs/cli-guide.md) | Detailed notes on individual commands, payloads, and automation hooks |
+| [docs/tool-wrapping-strategy.md](https://github.com/grammy-jiang/FlashCrucible/blob/master/docs/tool-wrapping-strategy.md) | Which external tools are wrapped, and what must be built natively |
+| [docs/design-v0-structure.md](https://github.com/grammy-jiang/FlashCrucible/blob/master/docs/design-v0-structure.md) | Module and package architecture |
+| [docs/design-v0-details.md](https://github.com/grammy-jiang/FlashCrucible/blob/master/docs/design-v0-details.md) | Detailed design notes |
+| [docs/features-roadmap-v0.md](https://github.com/grammy-jiang/FlashCrucible/blob/master/docs/features-roadmap-v0.md) | Feature priorities and phase plan |
+| [docs/sd-tools-study-v0.md](https://github.com/grammy-jiang/FlashCrucible/blob/master/docs/sd-tools-study-v0.md) | Survey of existing microSD test tools |
+| [docs/ux-v0.md](https://github.com/grammy-jiang/FlashCrucible/blob/master/docs/ux-v0.md) | CLI UX requirements |
+| [docs/phase3-4-plan.md](https://github.com/grammy-jiang/FlashCrucible/blob/master/docs/phase3-4-plan.md) | Endurance, orchestration, and automation work plan |
+| [docs/agent-readiness.md](https://github.com/grammy-jiang/FlashCrucible/blob/master/docs/agent-readiness.md) | What works today for AI agents, and what is missing |
+| [AGENTS.md](https://github.com/grammy-jiang/FlashCrucible/blob/master/AGENTS.md) | Working agreement for AI agents contributing to this repository |
 
 ## Platform support
 
 Linux only: x86_64, arm32, arm64. Tested against Debian/Ubuntu and Fedora/CentOS/RHEL families.
+
+The Linux-only scope is deliberate rather than incidental: the tool reads card identity from
+sysfs, wear registers through the MMC ioctl interface, and drops the page cache with
+`posix_fadvise`. None of those have equivalents on Windows or macOS.
+
+## License
+
+[MIT](https://github.com/grammy-jiang/FlashCrucible/blob/master/LICENSE) © Grammy Jiang
