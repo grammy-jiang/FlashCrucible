@@ -5,7 +5,7 @@ top of them. For a general introduction see the [README](../README.md); for the 
 behind the UX rules see [ux-v0.md](ux-v0.md).
 
 > Several sections below reference `data/profiles/` and `data/workflows/`. Because of a path bug
-> (README, *Known limitations* #3), the defaults resolve to a non-existent `tfqa/data/` directory.
+> (README, *Known limitations* #2), the defaults resolve to a non-existent `tfqa/data/` directory.
 > Pass `--profiles-dir data/profiles` or set `TFQA_WORKFLOWS_DIR=data/workflows` until it is fixed.
 
 ## Contents
@@ -33,13 +33,16 @@ FlashCrucible is an interactive CLI and treats UX as a requirement, not a polish
 - **Safety first.** Never default to a device; force explicit selection. Confirm destructive
   actions with loud prompts unless `--yes` / `--non-interactive` is set. Offer read-only and
   dry-run modes wherever possible.
-- **Destructive guardrails.** Destructive operations should call
+- **Destructive guardrails.** Every command that writes raw blocks calls
   `tfqa.core.safety.assert_safe_for_destructive`, which enforces that the device is neither a
   system disk nor currently mounted. On failure the CLI raises `DeviceUnsafeError` (error code
-  `DEVICE_UNSAFE`) with details such as `is_system_disk` and `mountpoints`, and instructs
-  automation to retry with `--force --yes` (or via `TFQA_MODE=ai`). Covered by
-  `tests/test_core_safety.py` and `tests/test_cli_full_capacity.py`. **This is the intended
-  design; see README *Known limitations* #1 for what is actually wired today.**
+  `DEVICE_UNSAFE`, exit code 3) with details such as `is_system_disk` and `mountpoints`, and
+  instructs automation to retry with `--force --yes`. Both flags are required — `--force` alone
+  is treated as unconfirmed. Read-only paths (`surface-scan --mode readonly`, a non-writing
+  `pipeline` plan, `detect`, `health`, reporting) stay usable on a mounted card, and
+  `workload-smallfiles` is exempt because it writes through a mounted filesystem. Covered by
+  `tests/test_core_safety.py`, `tests/test_cli_safety_guard.py`, and
+  `tests/test_cli_full_capacity.py`.
 - **Progress and responsiveness.** Heartbeats and progress (bars for TTY, periodic text
   otherwise), approximate ETAs, clear phase labels with step position (`Step 2/5: verify`).
 - **Interrupts and robustness.** Handle Ctrl+C at safe points, mark runs aborted, point at partial

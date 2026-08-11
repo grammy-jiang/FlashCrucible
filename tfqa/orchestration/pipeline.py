@@ -56,6 +56,37 @@ DEFAULT_STAGE_ORDER = [
     "summary",
 ]
 
+# Stages that write raw blocks to the device, and so must clear the
+# mounted/system-disk safety checks before a pipeline runs them.
+#
+# `workload-smallfiles` is deliberately absent: it writes through a mounted
+# filesystem, so demanding an unmounted device would make it unrunnable.
+# `detect`, `health`, and `summary` only read.
+DESTRUCTIVE_STAGES = frozenset(
+    {
+        "quick-test",
+        "full-capacity-test",
+        "surface-scan",
+        "performance",
+        "endurance",
+        "image",
+        "image-flash",
+    }
+)
+
+
+def plan_is_destructive(stage_names: Iterable[str]) -> bool:
+    """Return True when any stage in the plan writes to the device.
+
+    Accepts both bare stage names (`quick-test`) and the prefixed form used in
+    results (`pipeline.quick-test`).
+    """
+
+    return any(
+        name.split(".")[-1].strip().lower() in DESTRUCTIVE_STAGES
+        for name in stage_names
+    )
+
 
 def normalize_status(raw_status: Any | None) -> TestStatus:
     if raw_status is None:
