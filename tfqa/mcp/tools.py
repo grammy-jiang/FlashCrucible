@@ -174,14 +174,30 @@ def build_tools(registry: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
-def _flag(descriptor: dict[str, Any]) -> str:
+def _long(flags: list[str], name: str) -> str:
     """The long flag, which is the stable one; short flags come and go."""
 
-    flags = descriptor.get("flags") or []
     long_flags = [flag for flag in flags if flag.startswith("--")]
     if not long_flags:  # pragma: no cover - every option declares one
-        raise ToolError(f"{descriptor['name']} has no long flag")
+        raise ToolError(f"{name} has no long flag")
     return long_flags[0]
+
+
+def _flag(descriptor: dict[str, Any]) -> str:
+    return _long(descriptor.get("flags") or [], descriptor["name"])
+
+
+def _negative_flag(descriptor: dict[str, Any]) -> str | None:
+    """The off switch of a paired flag, if it has one.
+
+    `--free-space-only/--no-free-space-only` defaults to on, so treating
+    `false` as "omit the flag" left the default in force: an agent asking for a
+    whole-device probe silently got the free-space one and was told it had run
+    what it asked for.
+    """
+
+    secondary = descriptor.get("secondary_flags") or []
+    return _long(secondary, descriptor["name"]) if secondary else None
 
 
 def _render(descriptor: dict[str, Any], value: Any) -> list[str]:
@@ -190,8 +206,13 @@ def _render(descriptor: dict[str, Any], value: Any) -> list[str]:
     if expected == "boolean":
         if not isinstance(value, bool):
             raise ToolError(f"{name!r} must be a boolean, got {type(value).__name__}")
-        # A false flag is an absent flag; `--force false` would arm the run.
-        return [_flag(descriptor)] if value else []
+        if value:
+            return [_flag(descriptor)]
+        negative = _negative_flag(descriptor)
+        # For a plain flag, false is an absent flag; `--force false` would arm
+        # the run. For a paired one, false has its own spelling and omitting it
+        # would quietly keep a default the caller asked to change.
+        return [negative] if negative else []
     if expected == "integer" and (
         isinstance(value, bool) or not isinstance(value, int)
     ):

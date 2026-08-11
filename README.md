@@ -252,8 +252,11 @@ hard to fire as the same command in a shell: it refuses without both `force` and
 server never supplies either on the caller's behalf. Destructive tools carry `destructiveHint` and
 say so in their description.
 
-Long runs should pass `detach` and be polled with the `status` tool; a blocking call is bounded by
-`TFQA_MCP_TIMEOUT` (default 600s) so one long test cannot wedge the server.
+Long runs should pass `detach` and be polled with the `status` tool. A blocking call is bounded by
+`TFQA_MCP_TIMEOUT` (default 600s) so one long test cannot wedge the server — but a run that has
+cleared the guard and is writing raw blocks is never killed at the timeout. It is left alone and
+reported, because killing it would abandon the device half-written and could orphan the external
+tool doing the writing.
 
 Exit codes are stable (`tfqa/core/error_codes.py`):
 

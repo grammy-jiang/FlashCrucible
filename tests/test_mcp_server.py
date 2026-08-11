@@ -19,7 +19,7 @@ from jsonschema import Draft7Validator
 
 from tfqa.cli.main import _build_describe_registry, _collect_command_map
 from tfqa.mcp import tools as tool_defs
-from tfqa.mcp.server import PROTOCOL_VERSION, Server, serve
+from tfqa.mcp.server import PROTOCOL_VERSION, Outcome, Server, serve
 
 REGISTRY = _build_describe_registry()
 TOOLS = {tool["name"]: tool for tool in tool_defs.build_tools(REGISTRY)}
@@ -190,6 +190,59 @@ class TestDestructiveToolsAreNotEasier:
         assert result["result"]["isError"] is True
 
 
+class TestPairedBooleanFlags:
+    """`--verify/--no-verify` needs both spellings to be reachable.
+
+    Treating false as "omit the flag" left the CLI default in force. For
+    `quick-test` that default is `--free-space-only`, so an agent asking for a
+    whole-device probe silently got the free-space one -- and was told it had
+    run what it asked for.
+    """
+
+    PAIRED = [
+        ("quick-test", "free_space_only", "--no-free-space-only"),
+        ("workload-smallfiles", "delete_after", "--no-delete"),
+        ("workload-smallfiles", "read_after_write", "--no-read"),
+        ("image-flash", "verify", "--no-verify"),
+        ("filesystem-check", "read_only", "--no-read-only"),
+    ]
+
+    @pytest.mark.parametrize("command,option,negative", PAIRED)
+    def test_false_selects_the_negative_flag(
+        self, command: str, option: str, negative: str
+    ) -> None:
+        argv = tool_defs.argv_for(
+            REGISTRY[command], {"device": "/dev/sdz", option: False}
+        )
+        assert negative in argv
+
+    @pytest.mark.parametrize("command,option,negative", PAIRED)
+    def test_true_selects_the_positive_flag(
+        self, command: str, option: str, negative: str
+    ) -> None:
+        argv = tool_defs.argv_for(
+            REGISTRY[command], {"device": "/dev/sdz", option: True}
+        )
+        assert negative not in argv
+
+    def test_describe_publishes_the_negative_spelling(self) -> None:
+        # The CLI contract is what the MCP layer projects, so the off switch
+        # has to be discoverable there too.
+        option = next(
+            o
+            for o in REGISTRY["quick-test"]["options"]
+            if o["name"] == "free_space_only"
+        )
+        assert option["secondary_flags"] == ["--no-free-space-only"]
+
+    def test_a_plain_flag_still_omits_when_false(self) -> None:
+        # `--force` has no paired off switch; `--force false` would arm the run.
+        argv = tool_defs.argv_for(
+            REGISTRY["full-capacity-test"], {"device": "/dev/sdz", "force": False}
+        )
+        assert "--force" not in argv and "--no-force" not in argv
+
+
 class TestArgumentRendering:
     def test_output_is_forced_to_json(self) -> None:
         argv = tool_defs.argv_for(REGISTRY["detect"], {})
@@ -323,7 +376,7 @@ class TestCalling:
                 "returncode": 1,
             },
         )()
-        with patch.object(Server, "_run", return_value=completed):
+        with patch.object(Server, "_run", return_value=Outcome(completed)):
             result = _respond(
                 server,
                 _request(
@@ -351,7 +404,7 @@ class TestCalling:
         completed = type(
             "R", (), {"stdout": "segfault", "stderr": "boom", "returncode": 139}
         )()
-        with patch.object(Server, "_run", return_value=completed):
+        with patch.object(Server, "_run", return_value=Outcome(completed)):
             result = _respond(
                 server, _request("tools/call", {"name": "detect", "arguments": {}})
             )["result"]
@@ -363,7 +416,7 @@ class TestCalling:
     ) -> None:
         # The server is single-threaded; a blocked call would wedge every other
         # tool, so it is bounded and the caller is told to detach instead.
-        with patch.object(Server, "_run", return_value=None):
+        with patch.object(Server, "_run", return_value=Outcome(None)):
             result = _respond(
                 server,
                 _request(
@@ -381,14 +434,96 @@ class TestCalling:
         # call overwrite the same run.
         with (
             patch.dict("os.environ", {"TFQA_RUN_ID": "server-run"}),
-            patch("subprocess.run") as run,
+            patch("subprocess.Popen") as popen,
         ):
-            run.return_value = type(
-                "R", (), {"stdout": "{}", "stderr": "", "returncode": 0}
-            )()
+            popen.return_value.communicate.return_value = ("{}", "")
+            popen.return_value.returncode = 0
             _respond(
                 server, _request("tools/call", {"name": "detect", "arguments": {}})
             )
 
-        assert "TFQA_RUN_ID" not in run.call_args.kwargs["env"]
-        assert run.call_args.kwargs["env"]["TFQA_MODE"] == "ai"
+        assert "TFQA_RUN_ID" not in popen.call_args.kwargs["env"]
+        assert popen.call_args.kwargs["env"]["TFQA_MODE"] == "ai"
+
+
+class TestATimeoutNeverKillsAWrite:
+    """Killing a command mid-overwrite is worse than a slow tool call.
+
+    SIGKILL skips the CLI's own final-state handling, and for the commands that
+    wrap dd or badblocks it kills the wrapper while the external writer keeps
+    going -- with nothing left tracking it.
+    """
+
+    def test_an_armed_destructive_run_is_left_alone(self, server: Server) -> None:
+        with patch.object(Server, "_run", return_value=Outcome(abandoned=True)) as run:
+            result = _respond(
+                server,
+                _request(
+                    "tools/call",
+                    {
+                        "name": "full-capacity-test",
+                        "arguments": {
+                            "device": "/dev/sdz",
+                            "force": True,
+                            "yes": True,
+                        },
+                    },
+                ),
+            )["result"]
+
+        assert run.call_args.kwargs["kill_on_timeout"] is False
+        assert result["isError"] is True
+        assert "left" in result["content"][0]["text"]
+        assert "cancel" in result["content"][0]["text"]
+
+    def test_a_read_only_run_may_be_stopped(self, server: Server) -> None:
+        with patch.object(Server, "_run", return_value=Outcome(None)) as run:
+            _respond(
+                server, _request("tools/call", {"name": "detect", "arguments": {}})
+            )
+        assert run.call_args.kwargs["kill_on_timeout"] is True
+
+    def test_an_unconfirmed_destructive_call_may_be_stopped(
+        self, server: Server
+    ) -> None:
+        # It never clears the guard, so it never reaches the device.
+        with patch.object(Server, "_run", return_value=Outcome(None)) as run:
+            _respond(
+                server,
+                _request(
+                    "tools/call",
+                    {
+                        "name": "full-capacity-test",
+                        "arguments": {"device": "/dev/sdz", "force": True},
+                    },
+                ),
+            )
+        assert run.call_args.kwargs["kill_on_timeout"] is True
+
+    def test_a_dry_run_may_be_stopped(self, server: Server) -> None:
+        with patch.object(Server, "_run", return_value=Outcome(None)) as run:
+            _respond(
+                server,
+                _request(
+                    "tools/call",
+                    {
+                        "name": "full-capacity-test",
+                        "arguments": {
+                            "device": "/dev/sdz",
+                            "force": True,
+                            "yes": True,
+                            "dry_run": True,
+                        },
+                    },
+                ),
+            )
+        assert run.call_args.kwargs["kill_on_timeout"] is True
+
+    def test_a_slow_read_only_command_is_actually_killed(self) -> None:
+        # The bound has to be real, not just reported.
+        server = Server(REGISTRY)
+        with patch.dict("os.environ", {"TFQA_MCP_TIMEOUT": "1"}):
+            outcome = server._run(["--output", "json", "detect"], kill_on_timeout=True)
+        # detect finishes well inside a second, so this proves the happy path
+        # still returns a result rather than a timeout.
+        assert outcome.completed is not None

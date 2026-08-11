@@ -37,6 +37,22 @@ PROTOCOL_VERSION = "2025-06-18"
 #: with `status`, so a block this long is a caller mistake worth reporting.
 DEFAULT_TIMEOUT_SECONDS = 600
 
+
+class Outcome:
+    """What became of a tool's subprocess."""
+
+    def __init__(
+        self,
+        completed: subprocess.CompletedProcess[str] | None = None,
+        *,
+        abandoned: bool = False,
+    ) -> None:
+        self.completed = completed
+        #: True when the run outlived the timeout and was deliberately left
+        #: alone rather than killed.
+        self.abandoned = abandoned
+
+
 PARSE_ERROR = -32700
 INVALID_REQUEST = -32600
 METHOD_NOT_FOUND = -32601
@@ -146,12 +162,24 @@ class Server:
         except tool_defs.ToolError as exc:
             return _tool_error(str(exc))
 
-        completed = self._run(argv)
-        if completed is None:
+        armed = _is_armed(metadata, arguments)
+        outcome = self._run(argv, kill_on_timeout=not armed)
+        if outcome.abandoned:
             return _tool_error(
-                f"{name} did not finish within {_timeout()}s. Long runs should "
-                "pass `detach` and be polled with the `status` tool."
+                f"{name} is still running after {_timeout()}s and was left "
+                "alone: it is writing raw blocks, and killing it would abandon "
+                "the device half-written and could orphan the external tool "
+                "doing the writing. Find it with the `status` tool, and stop it "
+                "with `cancel` if you meant to. Start long writes with `detach` "
+                "so they are tracked from the outset."
             )
+        if outcome.completed is None:
+            return _tool_error(
+                f"{name} did not finish within {_timeout()}s and was stopped. "
+                "Long runs should pass `detach` and be polled with the "
+                "`status` tool."
+            )
+        completed = outcome.completed
 
         payload = _parse_envelope(completed)
         if payload is None:
@@ -167,22 +195,50 @@ class Server:
             "isError": payload.get("status") == "error",
         }
 
-    def _run(self, argv: list[str]) -> subprocess.CompletedProcess[str] | None:
+    def _run(self, argv: list[str], *, kill_on_timeout: bool = True) -> Outcome:
         environment = {**os.environ, "TFQA_MODE": "ai", "TFQA_NON_INTERACTIVE": "1"}
         # The run id names a state file; inheriting the server's would make
         # every tool call overwrite the same run.
         environment.pop("TFQA_RUN_ID", None)
+        process = subprocess.Popen(
+            [sys.executable, "-m", "tfqa", *argv],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=environment,
+        )
         try:
-            return subprocess.run(
-                [sys.executable, "-m", "tfqa", *argv],
-                capture_output=True,
-                text=True,
-                timeout=_timeout(),
-                env=environment,
-                check=False,
-            )
+            stdout, stderr = process.communicate(timeout=_timeout())
         except subprocess.TimeoutExpired:
-            return None
+            if not kill_on_timeout:
+                # A command that is overwriting a card must not be killed to
+                # keep the server responsive. SIGKILL skips the CLI's own
+                # final-state handling, and for the commands that wrap dd or
+                # badblocks it kills the wrapper while the writer keeps going.
+                return Outcome(abandoned=True)
+            process.kill()
+            process.communicate()
+            return Outcome(None)
+        return Outcome(
+            subprocess.CompletedProcess(
+                process.args, process.returncode, stdout, stderr
+            )
+        )
+
+
+def _is_armed(metadata: dict[str, Any], arguments: dict[str, Any]) -> bool:
+    """Whether this call could actually write raw blocks.
+
+    A destructive command refused for want of confirmation, or asked only for
+    its plan, never touches the device -- so it is safe to stop on a timeout.
+    Only a run that cleared the guard needs protecting.
+    """
+
+    if not metadata.get("destructive"):
+        return False
+    if arguments.get("dry_run"):
+        return False
+    return bool(arguments.get("force")) and bool(arguments.get("yes"))
 
 
 def _parse_envelope(completed: subprocess.CompletedProcess[str]) -> Any:
