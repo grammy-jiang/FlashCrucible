@@ -189,17 +189,26 @@ uv run tfqa status                    # every recent run
 uv run tfqa cancel 20260811T093157Z-3f9c1a20
 ```
 
-`endurance` takes the same flags, and needs them more: it rewrites the whole span once per pass.
+`endurance` takes the same flags, and needs them more: it rewrites the tested span once per pass —
+the whole device by default, or whatever `--limit-bytes` bounds it to.
 
 ```bash
-uv run tfqa --yes endurance --device /dev/sdX --force --passes 20 --detach
+uv run tfqa endurance --device /dev/sdX --passes 20 --detach
+uv run tfqa endurance --device /dev/sdX --limit-bytes $((8 * 1024**3)) --passes 50
 ```
 
-`--passes` counts whole-span write+verify cycles and `--duration` is an overall deadline; the run
-stops at whichever comes first and records which. It stops early if the card starts refusing
-writes, or if a block comes back holding data written for a different offset — that is a wrapping
-counterfeit, not wear, and hammering it further learns nothing. An ordinary read mismatch is
-counted and the run continues, because the trend across passes is the measurement.
+No override flags: an unmounted, non-system card needs none. `--force --yes` is for the case where
+the guard has refused and you are certain it is the right device — see [Safety](#safety).
+
+`--passes` counts write+verify cycles over that span. `--duration` does **not** cut a pass short:
+it is checked only between passes, so it stops another one starting rather than stopping the run
+at that moment, and at least one pass always completes. On a large card a single pass can be
+hours, so a short duration does not bound the run — `--limit-bytes` does.
+
+The run stops early if the card starts refusing writes, or if a block comes back holding data
+written for a different offset. That is a wrapping counterfeit rather than wear, and hammering it
+further learns nothing. An ordinary read mismatch is counted and the run continues, because the
+trend across passes is the measurement.
 
 The run records phase, byte progress, and its outcome to a state file beside its JSONL log, so
 `status` works from any process and a crashed run still leaves something readable. A run whose
@@ -260,8 +269,8 @@ validates against the tool contract is the same result the CLI promises.
 
 The tools run the real CLI as a subprocess, which is the point — the safety guard, the exit codes,
 and the envelope have one implementation rather than two. A destructive tool over MCP is exactly as
-hard to fire as the same command in a shell: it refuses without both `force` and `yes`, and the
-server never supplies either on the caller's behalf. Destructive tools carry `destructiveHint` and
+hard to fire as the same command in a shell: an unsafe device is refused unless the call carries
+both `force` and `yes`, and the server never supplies either on the caller's behalf. Destructive tools carry `destructiveHint` and
 say so in their description.
 
 Long runs should pass `detach` and be polled with the `status` tool. A blocking call is bounded by

@@ -305,12 +305,16 @@ types and booleans are stable.
 ```bash
 uv run tfqa profiles
 uv run tfqa profiles --name camera-logger --output json
-uv run tfqa --yes endurance --device /dev/sdX --profile camera-logger --force --detach
+uv run tfqa endurance --device /dev/sdX --profile camera-logger --detach
 ```
 
 Filtering by `--name` lets automation verify a profile before invoking a destructive endurance
-loop — and it is worth doing, because the loop overwrites the whole span once per pass and needs
-both `--force` and `--yes`.
+loop — and it is worth doing, because the loop overwrites the tested span once per pass. That is
+the whole device unless `--limit-bytes` narrows it.
+
+An unmounted, non-system card needs no override flags. `--force --yes` exist to override a guard
+*refusal*, so passing them by habit is how a mistyped path to a mounted card or a system disk gets
+overwritten instead of refused.
 
 `write_pattern` is honoured, not merely recorded: `sequential` writes the blocks in order and
 `random` shuffles them with a seed derived from `--seed`, so the run stays reproducible. Anything

@@ -182,8 +182,8 @@ Pipelines record an unavailable stage as `skipped`, so it contributes no metrics
 the run.
 
 `endurance` refused outright until it could measure for real, which it now does
-([#32](https://github.com/grammy-jiang/FlashCrucible/issues/32)) — writing and verifying the span
-once per pass and reporting how the numbers move. What it still will not do is estimate: no
+([#32](https://github.com/grammy-jiang/FlashCrucible/issues/32)) — writing and verifying the
+tested span once per pass, which `--limit-bytes` can narrow, and reporting how the numbers move. What it still will not do is estimate: no
 lifetime, no TBW remaining, no health score, and wear only when the card's own registers answer.
 
 The lesson is recorded here because it recurred: this was the *same* defect removed from the
