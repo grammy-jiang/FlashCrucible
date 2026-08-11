@@ -21,10 +21,10 @@ uv run tfqa quick-test --device /dev/sdX --dry-run
 ```
 
 > **Status: alpha.** 23 commands, 324 tests, typed and linted in CI. The safety guardrails,
-> dry-run previews, JSON contract, and test engines all do what they say. Health readings depend
-> on hardware that can supply them, and no engine invents a number it did not measure. Read
-> [Safety](#safety) and [Known limitations](#known-limitations) before pointing this at a card you
-> care about.
+> dry-run previews, and JSON contract all do what they say, and `health` reports what it cannot
+> read rather than guessing. One exception remains: `performance` synthesises throughput figures
+> when `fio` is absent — see [Known limitations](#known-limitations). Read [Safety](#safety) and
+> that list before pointing this at a card you care about.
 
 ---
 
@@ -277,7 +277,23 @@ standing in for block devices. It also passes with every external binary hidden 
 
 ## Known limitations
 
-Honest list of what is constrained. Contributions welcome.
+### Known defect
+
+**`performance` synthesises throughput when `fio` is missing.** Both engines fall back to figures
+derived from device properties — a flat `240.0` for removable devices in
+`tfqa/tests/performance/basic.py:80`, a computed value in `random.py:125` — and return
+`status: "ok"`. The numbers land in `metrics`, which is what `trends` aggregates, while the
+`mode: "simulated"` marker sits in `details`, which `trends` never reads. So a figure that was
+never measured can appear in a throughput trend, indistinguishable from a real one.
+
+Until it is fixed: run `tfqa capabilities` to confirm `fio` is installed, or check
+`data.details.mode` before believing a `performance` result. This is the same class of problem as
+the fabricated health data that has since been removed, and it is next on the list — see
+[docs/agent-readiness.md](https://github.com/grammy-jiang/FlashCrucible/blob/master/docs/agent-readiness.md).
+
+### Constraints
+
+These are inherent rather than defects. Contributions welcome.
 
 1. **Health data needs the right hardware.** Wear data comes from eMMC `EXT_CSD` registers
    (usually root) or from `sdmon` on industrial SD cards. A consumer card in a USB reader can

@@ -33,14 +33,21 @@ repository.
 ### 1. Never invent a measurement
 
 If the device cannot supply a value, report that it is unavailable and why. Do not substitute a
-plausible number, a default, or anything derived from the device path.
+plausible number, a default, or anything derived from the device path or from other device
+properties.
 
 The health readers once returned values derived from `hash(device_path)`. Python randomises string
 hashing per process, so the same card reported a different serial number and wear figure on every
 run — and those values were written into the run history and aggregated by `tfqa trends`.
 
 Practical form: raise a typed error from the reader, and let the caller record `available: false`
-with a reason. See `tfqa/tests/health/snapshot.py`.
+with a reason. See `tfqa/tests/health/snapshot.py` for the shape to copy.
+
+**This rule is not yet true everywhere.** Both performance engines still synthesise throughput
+when `fio` is missing (`tfqa/tests/performance/basic.py:80`, `random.py:125`) and return
+`status: "ok"`. They mark it with `details["mode"] = "simulated"`, but `trends` aggregates
+`metrics`, not `details`, so the invented figures reach trend analysis unlabelled. Do not copy
+that pattern, and do not treat its presence as precedent — it is a known defect awaiting a fix.
 
 ### 2. Never swallow an error
 
@@ -52,15 +59,21 @@ Broad `except` is acceptable in exactly one shape: a per-item loop where one bad
 abort the batch **and** the failure is recorded on that item. Anything else, let it propagate as a
 typed error.
 
-### 3. Anything that writes to a device must clear the safety guard
+### 3. Anything that writes **raw blocks** must clear the safety guard
 
-Call `_assert_device_safe()` before touching the device. Overriding requires **both** `--force`
-and `--yes`; `--force` alone is treated as unconfirmed so a stray flag in a script cannot arm a
-destructive run.
+Call `_assert_device_safe()` before writing to the block device. Overriding requires **both**
+`--force` and `--yes`; `--force` alone is treated as unconfirmed so a stray flag in a script
+cannot arm a destructive run.
+
+The guard refuses a mounted device, so it applies to raw writes only. Work that goes *through* a
+mounted filesystem is exempt by design — `workload-smallfiles` creates files on the mounted card,
+so guarding it would make the command impossible to run. It passes `check_safety=False` for the
+same reason.
 
 Read-only paths stay usable on a mounted card. When in doubt, check what the command actually
 does rather than what its name suggests — a pipeline's `surface-scan` stage runs read-only even
-though the standalone command can write.
+though the standalone command can write, which is why
+`tfqa.orchestration.pipeline.DESTRUCTIVE_STAGES` excludes it and records why.
 
 ### 4. Anything that writes must support `--dry-run`
 

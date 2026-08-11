@@ -158,6 +158,32 @@ What is needed:
 *Effort: medium-to-large. Value: high — without it, the agent story breaks on exactly the commands
 that take real time.*
 
+#### F2. Stop the performance fallback inventing throughput — *known defect*
+
+When `fio` is absent, both performance engines return figures derived from device properties
+rather than measurement: `basic.py` uses a flat `240.0` for removable devices, `random.py`
+computes one from block size and queue depth. Both return `status: "ok"` and place the numbers in
+`metrics`, which is what `trends` aggregates. The `mode: "simulated"` marker sits in `details`,
+which `trends` never reads.
+
+So a 240 MB/s figure that was never measured can appear in a throughput trend, indistinguishable
+from a real one. This is the same defect that was removed from the health readers, surviving in a
+module the health work did not touch — found by an AI reviewer checking a README claim against the
+code rather than against the documentation.
+
+Options, in order of preference:
+
+1. Raise `ToolNotFoundError` and let `performance` report the measurement as unavailable, matching
+   what `health` now does.
+2. Keep a clearly-labelled estimate, but move the marker somewhere `trends` respects and exclude
+   simulated runs from aggregation.
+
+Option 1 is consistent with the rest of the project. Either way the fix belongs with **E**, since
+the result schema should make "measured" versus "estimated" explicit rather than leaving it to a
+key in `details`.
+
+*Effort: small. Value: high — it is a correctness bug in output people make decisions from.*
+
 #### G. Tool requirements in `describe`
 
 `capabilities` reports that `fio` is missing. `describe performance` does not mention that
@@ -186,6 +212,7 @@ long-running tool call times out. Building it first would bake both gaps into a 
 
 | Phase | Items | Rationale |
 | --- | --- | --- |
+| 0 | **F2** | A live correctness bug in output people act on; small |
 | 1 | **B**, **C**, **G** | Small, independent, immediately useful |
 | 2 | **A** | Turns the AGENTS.md rules into checks; highest development-side value |
 | 3 | **E** | Makes the output contract complete and verifiable |
