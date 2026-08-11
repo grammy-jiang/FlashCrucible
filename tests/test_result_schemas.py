@@ -50,6 +50,7 @@ READ_ONLY = [
     "lint-schemas",
     "history",
     "trends",
+    "status",
 ]
 
 # Device commands, exercised through --dry-run so nothing is written.
