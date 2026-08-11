@@ -98,30 +98,19 @@ MUTANTS: dict[str, Mutant] = {
         ),
         consequence="A fake-capacity card is reported as merely corrupt.",
     ),
-    "unimplemented-engine-invents-a-result": Mutant(
+    "endurance-reports-a-run-it-did-not-do": Mutant(
         target="tfqa.tests.endurance.simple.run_simple_endurance",
         # What the engine used to do: return a plausible-looking result for a
-        # run that never happened.
-        replacement=lambda ctx, config: {
+        # run that never happened, including for a device it could not test.
+        replacement=lambda ctx, config, progress=None: {
             "name": "endurance.simple",
             "status": "ok",
-            "metrics": {"cycles_completed": 100, "bytes_written": 1 << 30},
+            "metrics": {"passes_completed": 100, "bytes_written": 1 << 30},
         },
         guarded_by=("tests/test_engines_do_not_invent.py",),
-        consequence="An unimplemented engine reports a measurement it never took.",
-    ),
-    "endurance-implemented-without-the-guard": Mutant(
-        # Same target as above, different guard: that one proves the engine
-        # does not invent numbers, this one proves that implementing it cannot
-        # leave the safety exemptions behind.
-        target="tfqa.tests.endurance.simple.run_simple_endurance",
-        replacement=lambda ctx, config: {"name": "endurance.simple", "status": "ok"},
-        guarded_by=(
-            "tests/test_command_surface_invariants.py::TestEnduranceExemptionExpires",
-        ),
         consequence=(
-            "A destructive command ships with no safety guard, no confirmation "
-            "requirement, and a describe payload calling itself read-only."
+            "Endurance reports passes it never ran, and `trends` averages the "
+            "numbers into a history. This shipped once."
         ),
     ),
 }

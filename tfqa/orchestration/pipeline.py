@@ -88,10 +88,6 @@ DEFAULT_STAGE_ORDER = [
 #   workload-smallfiles  writes through a mounted filesystem, so demanding an
 #                    unmounted device would make it unrunnable.
 #   detect / health / summary  read only.
-#   endurance        does no device I/O at all right now -- it refuses with
-#                    NOT_IMPLEMENTED -- so classifying it destructive only made
-#                    a mounted card return DEVICE_UNSAFE before the caller could
-#                    learn the engine does not exist. Put it back when it writes.
 DESTRUCTIVE_STAGES = frozenset(
     {
         "quick-test",
@@ -99,6 +95,11 @@ DESTRUCTIVE_STAGES = frozenset(
         "performance",
         "image",
         "image-flash",
+        # Every pass overwrites the span. It was excluded while the engine
+        # refused to do any device I/O, and a plan of only endurance plus
+        # read-only stages would then have skipped both the safety preview and
+        # `_assert_device_safe` before the writes it now does.
+        "endurance",
     }
 )
 
@@ -257,6 +258,10 @@ def _endurance_stage(profile: EnduranceProfile) -> PipelineStage:
             force=profile.force,
             write_pattern=profile.write_pattern,
         )
+        # `validate_config` rejects a pattern the engine cannot perform, so a
+        # profile asking for one fails here rather than reporting a workload it
+        # did not run.
+        endurance_simple.validate_config(config)
         result = endurance_simple.run_simple_endurance(ctx, config)
         return result.model_dump()
 

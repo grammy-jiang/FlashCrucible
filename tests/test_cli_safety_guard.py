@@ -210,20 +210,38 @@ class PerformanceGuard(SafetyGuardTestCase):
 
 
 class EnduranceGuard(SafetyGuardTestCase):
-    def test_is_not_guarded_while_it_writes_nothing(self):
-        # The engine performs no device I/O, so guarding it would answer
-        # DEVICE_UNSAFE on a mounted card and hide the fact that it is simply
-        # not implemented. Restore the guard together with the writes.
+    """Every pass overwrites the span, so it is guarded like any other writer.
+
+    It was exempt while the engine refused to do device I/O -- guarding it then
+    would have answered DEVICE_UNSAFE on a mounted card and hidden the fact
+    that it was simply not implemented. The exemption expired with the stub.
+    """
+
+    def _invoke(self, *extra: str):
         with (
             patch("tfqa.core.devices.get_device", return_value=MOUNTED),
             patch("tfqa.orchestration.profile.load_profile", return_value=PROFILE),
         ):
-            result = self.runner.invoke(
+            return self.runner.invoke(
                 app,
-                ["endurance", "--device", MOUNTED.path, "--output", "json"],
+                ["endurance", "--device", MOUNTED.path, "--output", "json", *extra],
             )
+
+    def test_a_mounted_device_is_refused(self):
+        resp = CLIResponse.model_validate_json(self._invoke().stdout)
+        self.assertEqual(resp.error_code, "DEVICE_UNSAFE")
+
+    def test_force_without_yes_is_still_refused(self):
+        # A stray --force left in a script must not on its own arm a run that
+        # overwrites the card several times over.
+        resp = CLIResponse.model_validate_json(self._invoke("--force").stdout)
+        self.assertEqual(resp.error_code, "DEVICE_UNSAFE")
+
+    def test_force_and_yes_together_clear_the_guard(self):
+        result = self._invoke("--force", "--yes")
+        # It gets past the guard; what happens next is the engine's business,
+        # and /dev/... does not exist here.
         resp = CLIResponse.model_validate_json(result.stdout)
-        self.assertEqual(resp.error_code, "NOT_IMPLEMENTED")
         self.assertNotEqual(resp.error_code, "DEVICE_UNSAFE")
 
 
@@ -459,6 +477,9 @@ class PlanIsDestructive(TestCase):
             "full-capacity-test",
             "performance",
             "image-flash",
+            # Every endurance pass overwrites the span. It was read-only here
+            # only while the engine refused to do any device I/O.
+            "endurance",
         ):
             with self.subTest(stage=stage):
                 self.assertTrue(plan_is_destructive(["detect", stage]))
@@ -467,8 +488,7 @@ class PlanIsDestructive(TestCase):
         # The pipeline runs surface-scan in readonly mode and fsck with
         # read_only=True, so neither writes. Only the standalone commands can,
         # and those guard themselves.
-        # `endurance` joins these while it performs no device I/O.
-        for stage in ("surface-scan", "filesystem-check", "endurance"):
+        for stage in ("surface-scan", "filesystem-check"):
             with self.subTest(stage=stage):
                 self.assertFalse(plan_is_destructive(["detect", stage]))
 

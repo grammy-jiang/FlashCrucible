@@ -13,6 +13,7 @@ from tfqa.orchestration.pipeline import (
     normalize_status,
     run_pipeline,
 )
+from tfqa.orchestration import pipeline as pipeline_mod
 from tfqa.orchestration.profile import EnduranceProfile
 
 
@@ -49,6 +50,30 @@ class TestOrchestrationPipeline(unittest.TestCase):
         profile = _make_profile()
         with self.assertRaises(ArgumentError):
             build_pipeline(profile, [])
+
+
+class TestEnduranceIsDestructiveInAPlan(unittest.TestCase):
+    """A plan of endurance plus read-only stages still overwrites the card.
+
+    While the engine refused to do device I/O, excluding it kept a mounted card
+    from answering DEVICE_UNSAFE before the caller learned the engine did not
+    exist. Now that it writes, that exclusion would skip both the safety
+    preview and `_assert_device_safe` before the writes.
+    """
+
+    def test_endurance_is_a_destructive_stage(self) -> None:
+        self.assertIn("endurance", pipeline_mod.DESTRUCTIVE_STAGES)
+
+    def test_a_plan_containing_it_is_destructive(self) -> None:
+        self.assertTrue(pipeline_mod.plan_is_destructive(["health", "endurance"]))
+
+    def test_the_prefixed_form_counts_too(self) -> None:
+        self.assertTrue(pipeline_mod.plan_is_destructive(["pipeline.endurance"]))
+
+    def test_a_read_only_plan_is_still_not_destructive(self) -> None:
+        self.assertFalse(
+            pipeline_mod.plan_is_destructive(["health", "filesystem-check"])
+        )
 
 
 class TestNormalizeStatus(unittest.TestCase):

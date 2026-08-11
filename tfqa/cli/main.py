@@ -114,7 +114,12 @@ _TOOL_REQUIREMENTS: dict[str, dict[str, Any]] = {
         ),
     },
     "endurance": {
-        "degradation": "Always fails with NOT_IMPLEMENTED; the engine does no device I/O.",
+        "degradation": (
+            "Native implementation; needs write access to the block device. "
+            "Wear deltas need eMMC EXT_CSD registers or sdmon, and are "
+            "reported as unavailable with the reason when neither answers."
+        ),
+        "optional_tools": ["mmc", "sdmon"],
     },
     "full-capacity-test": {
         "degradation": "Native implementation; needs write access to the block device.",
@@ -162,9 +167,9 @@ _DESCRIBE_OVERRIDES: dict[str, dict[str, Any]] = {
         ),
     },
     "endurance": {
-        "destructive": False,
-        "requires_root": False,
-        "destructive_when": "never while the engine is unimplemented",
+        "destructive": True,
+        "requires_root": True,
+        "destructive_when": "always: every pass overwrites the span",
     },
     "quick-test": {
         "destructive": True,
@@ -555,7 +560,9 @@ def _progress_recorder(
         status.phase = phase
         status.completed_bytes = sum(seen.values())
         status.total_bytes = total * passes
-        if phase == "write" and done > 0:
+        # Endurance names its phases `pass0-write`, so match on the suffix
+        # rather than the whole string; a read-only pass must never set this.
+        if phase.endswith("write") and done > 0:
             status.wrote_to_device = True
         now = time.time()
         if now - last[0] >= 1.0 or status.completed_bytes >= status.total_bytes:
@@ -2242,12 +2249,20 @@ def endurance(
     duration: float | None = typer.Option(
         None,
         "--duration",
-        help="Duration in seconds for each pass (profiles can override).",
+        help=(
+            "Overall wall-clock deadline in seconds (profiles can override). "
+            "Checked between passes, never mid-span, because half a pass "
+            "verifies nothing."
+        ),
     ),
     passes: int | None = typer.Option(
         None,
         "--passes",
-        help="Number of passes to simulate (profiles can override).",
+        help=(
+            "Whole-span write+verify cycles to run (profiles can override). "
+            "The run stops at this count or at --duration, whichever comes "
+            "first."
+        ),
     ),
     force: bool | None = typer.Option(
         None,
@@ -2260,12 +2275,32 @@ def endurance(
         "-p",
         help="Named endurance profile to load from data/profiles.",
     ),
+    yes: bool | None = typer.Option(
+        None, "--yes", "-y", help="Confirm the destructive operation."
+    ),
+    block_size: int = typer.Option(
+        1024 * 1024, "--block-size", help="Bytes written per I/O chunk."
+    ),
+    limit_bytes: int | None = typer.Option(
+        None,
+        "--limit-bytes",
+        help="Bound each pass to this many bytes instead of the whole device.",
+    ),
+    seed: int = typer.Option(
+        0, "--seed", help="Base for the per-pass pattern; fixed for reproducibility."
+    ),
+    detach: bool = typer.Option(False, "--detach", help=DETACH_HELP),
     dry_run: bool = typer.Option(
         False, DRY_RUN_FLAG, help="Show the endurance plan without running it."
     ),
     output: str | None = typer.Option(None, "--output", "-o", help=OUTPUT_HELP),
 ) -> None:
-    """Run a simple endurance/burn-in loop on the provided device."""
+    """Repeatedly overwrite and verify the device to measure how it degrades.
+
+    Destructive: every pass overwrites the span. Requires both `--force` and
+    `--yes`. A full run is hours of I/O, so start it with `--detach` and poll
+    `tfqa status`.
+    """
 
     command_name = "endurance"
     try:
@@ -2288,13 +2323,28 @@ def endurance(
             overrides["pass_count"] = passes
         if force is not None:
             overrides["force"] = force
+        overrides["block_size"] = block_size
+        overrides["limit_bytes"] = limit_bytes
+        overrides["seed"] = seed
         engine_config = base_config.with_overrides(**overrides)
         # The effective force flag can come from the profile, so evaluate
         # safety against the merged config rather than the raw CLI option.
         effective_force = bool(engine_config.force)
+        # The local option is tri-state: an explicit --no-yes must revoke the
+        # global confirmation rather than be overridden by it.
+        actual_yes = (
+            bool(yes)
+            if yes is not None
+            else bool(ctx.obj.get("global", {}).get("yes", False))
+        )
         # Same rules the engine applies, so a dry run never advertises a plan
         # the real invocation would refuse.
         endurance_simple.validate_config(engine_config)
+        span = (
+            min(target_device.size_bytes, engine_config.limit_bytes)
+            if engine_config.limit_bytes is not None
+            else target_device.size_bytes
+        )
 
         if _resolve_dry_run(ctx, dry_run):
             _emit_dry_run(
@@ -2308,31 +2358,87 @@ def endurance(
                     "pass_count": engine_config.pass_count,
                     "write_pattern": engine_config.write_pattern,
                     "force": effective_force,
+                    "block_size": engine_config.block_size,
+                    "limit_bytes": engine_config.limit_bytes,
+                    "span_bytes": span,
+                    "destructive": True,
                 },
                 actual_output,
                 force=effective_force,
-                # The engine writes nothing today, so a refusal preview would
-                # describe a guard that no longer applies.
-                check_safety=False,
+                confirmed=actual_yes,
             )
             return
 
-        # No _assert_device_safe here on purpose: the engine performs no device
-        # I/O, so guarding it only made a mounted card answer DEVICE_UNSAFE
-        # before the caller could learn the engine is not implemented. Restore
-        # the guard together with the writes.
+        _assert_device_safe(ctx, target_device, effective_force, confirmed=actual_yes)
+
+        if detach:
+            child = _detach(ctx, run_id, _config.log_dir)
+            _begin_run(
+                command_name,
+                run_id,
+                target_device.path,
+                _config.log_dir,
+                pid=child,
+                total_bytes=span * engine_config.pass_count,
+            )
+            started = CLIResponse(
+                status="ok",
+                command=command_name,
+                run_id=run_id,
+                device={"path": target_device.path},
+                message=f"Started in the background as {run_id}.",
+                data={"run_id": run_id, "pid": child, "detached": True},
+            )
+            if actual_output == "json":
+                print(started.model_dump_json())
+            else:
+                print(started.message)
+                print(f"Follow it with: tfqa status {run_id}")
+            return
 
         run_ctx = RunContext(
             run_id=run_id,
             started_at=datetime.now(timezone.utc),
             device=target_device,
             config_profile=profile,
-            destructive=False,
+            destructive=True,
             mode="ai" if actual_output == "json" else "human",
             log_dir=_config.log_dir,
         )
 
-        result = endurance_simple.run_simple_endurance(run_ctx, engine_config)
+        tracked = _begin_run(
+            command_name,
+            run_id,
+            target_device.path,
+            _config.log_dir,
+            total_bytes=span * engine_config.pass_count,
+        )
+        try:
+            result = endurance_simple.run_simple_endurance(
+                run_ctx,
+                engine_config,
+                # Every pass writes then verifies the span, so the job is that
+                # many passes over both halves.
+                progress=_progress_recorder(
+                    tracked, _config.log_dir, passes=engine_config.pass_count * 2
+                ),
+            )
+        except BaseException as exc:
+            _finish_run(
+                tracked,
+                _config.log_dir,
+                state="cancelled" if isinstance(exc, KeyboardInterrupt) else "failed",
+                message=getattr(exc, "message", None) or str(exc),
+                error_code=getattr(exc, "error_code", None),
+            )
+            raise
+        _finish_run(
+            tracked,
+            _config.log_dir,
+            state="completed" if result.status == "ok" else "failed",
+            message=str(result.details.get("summary") or ""),
+            metrics=dict(result.metrics),
+        )
         data = result.model_dump()
         data["profile"] = profile
 
@@ -2341,10 +2447,15 @@ def endurance(
             cli_status = "error"
         else:
             cli_status = "ok" if result.status == "ok" else "fail"
-        message = (
-            "Endurance simulation completed."
+        # The engine's own summary, which names how many passes ran and why
+        # it stopped. "Simulation" was accurate while it was a stub; it is not
+        # any more, and a run that overwrites the card several times over must
+        # not describe itself as one.
+        summary = str(result.details.get("summary") or "")
+        message = summary or (
+            "Endurance completed."
             if result.status == "ok"
-            else "Endurance simulation finished with warnings."
+            else "Endurance finished with issues."
         )
 
         resp = CLIResponse(
@@ -2363,14 +2474,25 @@ def endurance(
             return
 
         metrics: dict[str, object] = cast(dict[str, object], result.metrics)
+        print(f"Endurance {result.status.upper()} for {target_device.path}")
         print(resp.message)
         print(f"Profile: {profile}")
-        print(f"Duration per pass: {result.details.get('duration_seconds')}s")
-        print(f"Pass count: {result.details.get('pass_count')}")
         if metrics:
             print(METRICS_LABEL)
             for key, value in metrics.items():
                 print(f"  {key}: {value}")
+        # Per-pass numbers are the result: one summary line hides whether the
+        # card slowed down or started failing partway through.
+        endurance_passes = cast(list[dict[str, Any]], result.details.get("passes", []))
+        if endurance_passes:
+            print("Passes:")
+            for entry in endurance_passes:
+                print(
+                    f"  {entry['index']}: wrote {entry['bytes_written']} bytes at "
+                    f"{entry['write_throughput_mbps']} MB/s, "
+                    f"{entry['mismatches']} mismatch(es)"
+                )
+        _print_warnings(result.warnings)
 
     except TFQAError as e:
         resp = CLIResponse(
