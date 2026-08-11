@@ -367,6 +367,21 @@ def _resolve_output(ctx: typer.Context, explicit: str | None) -> str:
     return ctx.obj.get("global", {}).get("output", "human")
 
 
+def _print_warnings(warnings: Sequence[str]) -> None:
+    """Show what weakens a result, in the output a person actually reads.
+
+    A warning that exists only in the JSON tells a human the test is OK while
+    the evidence behind that verdict is in doubt -- and buy-or-scrap decisions
+    are made from this output.
+    """
+
+    if not warnings:
+        return
+    print("Warnings:")
+    for warning in warnings:
+        print(f" - {warning}")
+
+
 def _resolve_dry_run(ctx: typer.Context, explicit: bool) -> bool:
     """True when either the global `--dry-run` or the command's own flag is set.
 
@@ -2048,6 +2063,7 @@ def full_capacity_test(
             print("Issues:")
             for issue in issues:
                 print(f" - {issue}")
+        _print_warnings(payload["warnings"])
 
     except TFQAError as e:
         resp = CLIResponse(
@@ -3259,6 +3275,7 @@ def workload_smallfiles_command(
             print(METRICS_LABEL)
             for key, value in workload_metrics.items():
                 print(f"- {key}: {value}")
+        _print_warnings(result.warnings)
 
     except TFQAError as e:
         resp = CLIResponse(

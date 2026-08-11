@@ -40,6 +40,7 @@ class FullCapacityCLI(unittest.TestCase):
             "duration_seconds": 600.0,
             "throughput_mbps": 120.0,
             "issues": [],
+            "warnings": [],
             "details": {},
         }
 
@@ -78,6 +79,41 @@ class FullCapacityCLI(unittest.TestCase):
         self.assertEqual(resp.device, {"path": "/dev/sdb"})
         self.assertIsNotNone(resp.run_id)
 
+    def test_human_output_shows_warnings(self):
+        # A warning that lives only in the JSON tells a person the test is OK
+        # while the evidence behind that verdict is in doubt -- and buy-or-
+        # scrap decisions are made from this output.
+        device = make_device("/dev/sdw")
+
+        def get_device(_: str) -> DeviceInfo:
+            return device
+
+        payload: FullCapacityResult = {
+            "status": "ok",
+            "message": "Simulated full test.",
+            "coverage_percent": 100.0,
+            "duration_seconds": 1.0,
+            "throughput_mbps": 10.0,
+            "issues": [],
+            "warnings": ["could not drop the page cache: Operation not permitted"],
+            "details": {},
+        }
+        with (
+            patch("tfqa.core.devices.get_device", side_effect=get_device),
+            patch(
+                "tfqa.tests.capacity.full.run_full_capacity",
+                return_value=payload,
+            ),
+        ):
+            result = self.runner.invoke(
+                app,
+                ["--yes", "full-capacity-test", "--device", device.path, "--force"],
+            )
+
+        self.assertEqual(result.exit_code, 0, result.stdout)
+        self.assertIn("Warnings:", result.stdout)
+        self.assertIn("page cache", result.stdout)
+
     def test_full_capacity_human_failure(self):
         device = make_device("/dev/sdc")
 
@@ -93,6 +129,7 @@ class FullCapacityCLI(unittest.TestCase):
             "issues": [
                 "Bad sectors encountered",
             ],
+            "warnings": [],
             "details": {},
         }
 

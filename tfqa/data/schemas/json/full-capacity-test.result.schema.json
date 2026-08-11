@@ -94,6 +94,13 @@
                     "items": {
                       "type": "string"
                     }
+                  },
+                  "warnings": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Something that weakens the evidence rather than something the device got wrong -- a page cache that could not be dropped, for instance. Warnings never fail the run; `issues` do."
                   }
                 },
                 "additionalProperties": true

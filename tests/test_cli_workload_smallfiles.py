@@ -108,6 +108,34 @@ class WorkloadSmallfilesCLITest(unittest.TestCase):
         self.assertIn("Small-file workload completed.", cli_result.stdout)
         self.assertIn("files_created", cli_result.stdout)
 
+    def test_human_output_shows_warnings(self) -> None:
+        # The engine records "Some file operations failed during the workload."
+        # in `warnings`, and the human renderer never printed it -- so a person
+        # saw only the metrics and a clean message.
+        result = self._stub_result()
+        result.warnings = ["Some file operations failed during the workload."]
+        with (
+            patch(
+                "tfqa.cli.main.cfg_mod.load_config", return_value=self._stub_config()
+            ),
+            patch("tfqa.cli.main.devices_mod.get_device", return_value=self.device),
+            patch(
+                "tfqa.cli.main.workload_smallfiles.run_small_file_workload",
+                return_value=result,
+            ),
+            patch(
+                "tfqa.cli.main.history_mod.record_run",
+                return_value=Path("/tmp/history.jsonl"),
+            ),
+        ):
+            cli_result = self.runner.invoke(
+                app, ["workload-smallfiles", "--device", "/dev/fake"]
+            )
+
+        self.assertEqual(cli_result.exit_code, 0, cli_result.stdout)
+        self.assertIn("Warnings:", cli_result.stdout)
+        self.assertIn("file operations failed", cli_result.stdout)
+
     def test_workload_smallfiles_dry_run_json(self) -> None:
         mock_engine = Mock()
         with (

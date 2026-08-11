@@ -12,6 +12,7 @@ import os
 import tempfile
 from pathlib import Path
 from unittest import TestCase
+from unittest.mock import patch
 
 import pytest
 
@@ -291,6 +292,74 @@ class Options(TempDirCase):
         # Each pass names itself, so a caller can account for them separately
         # instead of watching progress reach 100% and then fall back to zero.
         self.assertEqual({phase for _done, _total, phase in seen}, {"write", "verify"})
+
+    def test_a_failed_cache_drop_is_reported_not_swallowed(self):
+        # Dropping the page cache is what makes the verify pass test the card
+        # rather than RAM. Discarding the failure meant a run whose evidence
+        # was worthless still reported a clean verify.
+        target = make_target(self.root)
+        with patch(
+            "os.posix_fadvise", side_effect=OSError(1, "Operation not permitted")
+        ):
+            result = full.run_full_capacity(
+                make_device(target), force=True, yes=True, block_size=BLOCK
+            )
+
+        self.assertTrue(
+            any("page cache" in warning for warning in result["warnings"]),
+            result["warnings"],
+        )
+
+    def test_a_failed_cache_drop_does_not_fail_the_run(self):
+        # The write may be perfectly sound; what is in doubt is the evidence.
+        target = make_target(self.root)
+        with patch(
+            "os.posix_fadvise", side_effect=OSError(1, "Operation not permitted")
+        ):
+            result = full.run_full_capacity(
+                make_device(target), force=True, yes=True, block_size=BLOCK
+            )
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["issues"], [])
+
+    def test_a_clean_run_warns_about_nothing(self):
+        target = make_target(self.root)
+        result = full.run_full_capacity(
+            make_device(target), force=True, yes=True, block_size=BLOCK
+        )
+        self.assertEqual(result["warnings"], [])
+
+    def test_an_fsync_failure_is_an_issue_not_a_warning(self):
+        # Different problem, different channel: the data never reached the
+        # card, which is a failure rather than weakened evidence.
+        target = make_target(self.root)
+        with patch("os.fsync", side_effect=OSError(5, "Input/output error")):
+            result = full.run_full_capacity(
+                make_device(target), force=True, yes=True, block_size=BLOCK
+            )
+
+        self.assertEqual(result["status"], "fail")
+        self.assertTrue(any("fsync" in issue for issue in result["issues"]))
+        self.assertEqual(result["warnings"], [])
+
+    def test_a_failed_fsync_suppresses_the_cache_warning(self):
+        # Both failing at once is the case the test above only covered by
+        # accident. The run has already failed for a stronger reason, so
+        # doubting the evidence for data that never arrived is noise.
+        target = make_target(self.root)
+        with (
+            patch("os.fsync", side_effect=OSError(5, "Input/output error")),
+            patch(
+                "os.posix_fadvise", side_effect=OSError(1, "Operation not permitted")
+            ),
+        ):
+            result = full.run_full_capacity(
+                make_device(target), force=True, yes=True, block_size=BLOCK
+            )
+
+        self.assertEqual(result["status"], "fail")
+        self.assertEqual(result["warnings"], [])
 
     def test_max_mismatches_caps_the_report(self):
         target = make_target(self.root)
