@@ -92,6 +92,12 @@ For the safety-critical paths specifically (the guard, `--dry-run` short-circuit
 `normalize_status`), a small harness that flips the condition and asserts the suite goes red would
 turn that discipline into a check.
 
+**Done** in [#19](https://github.com/grammy-jiang/FlashCrucible/issues/19). `tests/mutations.py`
+lists five predicates — the safety guard, the `--dry-run` short-circuit, `normalize_status`, wrap
+detection, and an unimplemented engine refusing rather than inventing a result — and
+`tests/test_mutation_guards.py` breaks each one and asserts the named tests go red. Adding one is a
+single dictionary entry. It runs in about three seconds.
+
 *Effort: medium. Value: moderate. Worth doing only for the handful of genuinely critical
 predicates, not the whole codebase.*
 

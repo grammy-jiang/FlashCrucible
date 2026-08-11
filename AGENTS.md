@@ -108,6 +108,11 @@ When you fix a bug, revert the fix, confirm the new test fails, then restore it.
 passes both before and after proves nothing. This has repeatedly caught fixes that did not do what
 they claimed.
 
+For the handful of predicates where a silent regression is expensive, the suite asks this of
+itself: `tests/mutations.py` lists them, and `tests/test_mutation_guards.py` breaks each one and
+asserts the named tests go red. Adding a predicate is one dictionary entry — what to break, which
+tests must notice, and what goes wrong if nothing does.
+
 ## These rules are enforced, not just written down
 
 `tests/test_command_surface_invariants.py` reads the command surface out of the
@@ -118,6 +123,12 @@ with the code about which commands are destructive.
 
 The command list is derived, not maintained, so adding a command adds it to the
 checks. Only the exemptions are written down, and each carries its reason.
+
+`tests/test_mutation_guards.py` covers rule 8 for five predicates: the safety
+guard, the `--dry-run` short-circuit, unknown-status normalisation, wrap
+detection, and an unimplemented engine refusing rather than inventing a result.
+Each is broken on purpose and the guard tests must fail. It runs in about three
+seconds.
 
 ## Repository layout
 

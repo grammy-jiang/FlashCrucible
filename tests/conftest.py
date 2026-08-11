@@ -6,10 +6,15 @@ installed: three CLI tests once passed only because `f3probe` happened to be
 present locally, and broke in CI.
 
     uv run pytest -q --hermetic
+
+Also honours `TFQA_MUTATE`, which breaks one safety-critical predicate before
+collection so `test_mutation_guards.py` can prove the suite notices. It is set
+only by that harness; a normal run never sees it.
 """
 
 from __future__ import annotations
 
+import os
 import shutil
 from collections.abc import Iterator
 from datetime import datetime
@@ -40,6 +45,22 @@ EXTERNAL_TOOLS = frozenset(
         "stress-ng",
     }
 )
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Apply a deliberate breakage before any test module is imported.
+
+    Earlier than a fixture on purpose: some predicates are read at import time,
+    and a mutation applied later would leave them untouched and the harness
+    reporting a guard that does not exist.
+    """
+
+    name = os.environ.get("TFQA_MUTATE")
+    if not name:
+        return
+    from tests import mutations
+
+    mutations.apply(name)
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
