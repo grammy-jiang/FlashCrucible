@@ -52,7 +52,7 @@ not hold; executable checks did.** That observation drives the priorities below.
 The suite is the strongest asset here. It is fast enough to run on every edit, and hermetic enough
 that a pass means something.
 
-### What is missing
+### What was missing
 
 #### A. Invariant tests over the command surface — *done*
 
@@ -72,46 +72,39 @@ and a bare boolean cannot say which.
 
 Verified by adding an unguarded `--device` command and watching three checks fail.
 
-#### B. Hermetic-tools CI job
+#### B. Hermetic-tools run — *done*
 
-The "hide every external binary" run has been executed by hand on every pull request in this
-series, and it caught a real host dependency that CI missed. It is currently one person's
-discipline. It should be a CI job.
+Resolved in [#12](https://github.com/grammy-jiang/FlashCrucible/issues/12). `pytest --hermetic`
+hides all 17 external binaries from `shutil.which`, and it runs in CI as part of `make verify`
+rather than as a separate job — one target means the hermetic run cannot be skipped without
+skipping everything.
 
-**Done** in [#12](https://github.com/grammy-jiang/FlashCrucible/issues/12). `pytest --hermetic`
-hides all 17 binaries from `shutil.which`, and it runs in CI as part of `make verify` rather than
-as a separate job — one target means the hermetic run cannot be skipped without skipping
-everything.
+The run had been executed by hand on every pull request in this series, and it caught a real host
+dependency CI missed: three CLI tests passed only because `f3probe` happened to be installed
+locally. That it depended on one person remembering is exactly why it is now a target.
 
-*Effort: small. Value: high — it already caught something.*
+#### C. One-command gate — *done*
 
-#### C. One-command gate
+Resolved in [#13](https://github.com/grammy-jiang/FlashCrucible/issues/13). `make verify` runs
+lint, formatting, types, the tests, the hermetic tests, and the schema checks, and it is what CI
+runs — so the two cannot drift.
 
-Five separate commands must pass before a PR. Agents get the set subtly wrong — running
-`ruff format` instead of `ruff format --check`, or skipping schema validation. A single
-`make verify` (or `uv run poe verify`) removes the guesswork and gives CI and local runs one
-definition.
+Five separate commands used to be required before a PR, listed in four places that disagreed.
+Agents got the set subtly wrong: `ruff format` instead of `ruff format --check`, or skipping
+schema validation, and found out from CI.
 
-**Done** in [#13](https://github.com/grammy-jiang/FlashCrucible/issues/13). `make verify` is what
-CI runs, so the two cannot drift.
+#### D. Mutation-style spot checks — *done*
 
-*Effort: small. Value: moderate, mostly in reduced friction.*
+Rule 8 in AGENTS.md — "a regression test must fail against the old code" — was manual, and for the
+safety-critical paths that discipline is now a check.
 
-#### D. Mutation-style spot checks
-
-Rule 8 in AGENTS.md — "a regression test must fail against the old code" — is currently manual.
-For the safety-critical paths specifically (the guard, `--dry-run` short-circuits,
-`normalize_status`), a small harness that flips the condition and asserts the suite goes red would
-turn that discipline into a check.
-
-**Done** in [#19](https://github.com/grammy-jiang/FlashCrucible/issues/19). `tests/mutations.py`
+Resolved in [#19](https://github.com/grammy-jiang/FlashCrucible/issues/19). `tests/mutations.py`
 lists five predicates — the safety guard, the `--dry-run` short-circuit, `normalize_status`, wrap
 detection, and an unimplemented engine refusing rather than inventing a result — and
 `tests/test_mutation_guards.py` breaks each one and asserts the named tests go red. Adding one is a
 single dictionary entry. It runs in about three seconds.
 
-*Effort: medium. Value: moderate. Worth doing only for the handful of genuinely critical
-predicates, not the whole codebase.*
+Deliberately not whole-codebase mutation testing: slow, noisy, and most mutants are uninteresting.
 
 ---
 
@@ -136,7 +129,7 @@ An agent can already discover the command set, check what the host supports, pre
 action including whether it would be refused, and parse every result the same way. That is a
 genuinely good baseline.
 
-### What is missing
+### What was missing
 
 #### E. Per-command result schemas — *done*
 
@@ -192,36 +185,31 @@ The lesson is recorded here because it recurred: this was the *same* defect remo
 health readers in #8, surviving in modules that work never touched. A claim about the codebase is
 worth checking against the codebase, not against the module you just fixed.
 
-#### G. Tool requirements in `describe`
+#### G. Tool requirements in `describe` — *done*
 
-`capabilities` reports that `fio` is missing. `describe performance` does not mention that
-`performance` degrades to a synthetic benchmark without it. The agent must know the relationship
-independently, which means hardcoding what the CLI already knows.
+Resolved in [#14](https://github.com/grammy-jiang/FlashCrucible/issues/14). `describe` reports
+`required_tools`, `optional_tools` and `degradation` per command, and the MCP tool descriptions are
+generated from them.
 
-Each command should declare its required and optional tools and what happens when they are absent.
-Small change, removes a class of guesswork.
+Before it, `capabilities` would report `fio` missing while `describe performance` said nothing
+about what `performance` does without it, so a caller had to know the relationship independently —
+hardcoding what the CLI already knew.
 
-**Done** in [#14](https://github.com/grammy-jiang/FlashCrucible/issues/14). `describe` now reports
-`required_tools`, `optional_tools`, and `degradation`, and the MCP tool descriptions are generated
-from them.
+#### H. MCP server — *done*
 
-*Effort: small. Value: moderate.*
+Exposing the CLI as MCP tools lets agents call FlashCrucible natively instead of shelling out and
+parsing. It was the most visible "AI-native" move available, and the one most likely to be built
+too early: an MCP server is a thin projection of the underlying contract, so without **E** its
+outputs would have been unvalidatable and without **F** every long call would have timed out.
+Building it first would have baked both gaps into a second interface.
 
-#### H. MCP server
-
-Exposing the CLI as MCP tools would let agents call FlashCrucible natively instead of shelling out
-and parsing. It is the most visible "AI-native" move available.
-
-It is also the one most likely to be built too early. An MCP server is a thin projection of the
-underlying contract: without **E** the tool outputs are unvalidatable, and without **F** every
-long-running tool call times out. Building it first would bake both gaps into a second interface.
-
-**Done** in [#18](https://github.com/grammy-jiang/FlashCrucible/issues/18), after E and F, as
+Resolved in [#18](https://github.com/grammy-jiang/FlashCrucible/issues/18), after E and F, as
 `tfqa mcp-server`. It held to the projection: tool inputs come from `describe`, outputs are the
 shipped result schemas, and each call runs the real CLI as a subprocess so the safety guard has
 one implementation rather than two.
 
-*Effort: large. Value: high, but only after E and F.*
+It held to the projection, and that is the property to defend: the moment it starts deciding
+things for itself there are two implementations of the safety model.
 
 ---
 
