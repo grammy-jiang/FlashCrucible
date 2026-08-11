@@ -108,6 +108,17 @@ When you fix a bug, revert the fix, confirm the new test fails, then restore it.
 passes both before and after proves nothing. This has repeatedly caught fixes that did not do what
 they claimed.
 
+## These rules are enforced, not just written down
+
+`tests/test_command_surface_invariants.py` reads the command surface out of the
+Typer tree and checks rules 1, 3, 4 and 6 mechanically. A new command taking
+`--device` fails the build unless it calls the safety guard and supports
+`--dry-run`, or is listed with a recorded reason. `describe` must also agree
+with the code about which commands are destructive.
+
+The command list is derived, not maintained, so adding a command adds it to the
+checks. Only the exemptions are written down, and each carries its reason.
+
 ## Repository layout
 
 | Path | Contents |

@@ -50,24 +50,23 @@ that a pass means something.
 
 ### What is missing
 
-#### A. Invariant tests over the command surface — *highest value*
+#### A. Invariant tests over the command surface — *done*
 
-Several rules in AGENTS.md are currently enforced only by an agent remembering to read them. They
-can be enforced mechanically by introspecting the Typer command tree:
+Resolved in [#15](https://github.com/grammy-jiang/FlashCrucible/issues/15).
+`tests/test_command_surface_invariants.py` reads the command surface out of the Typer tree and
+enforces four of the AGENTS.md rules mechanically: anything taking `--device` clears the safety
+guard and supports `--dry-run` (or is exempt for a recorded reason), no engine reports a status
+the pipeline vocabulary would reject, and `describe` agrees with the code about what is
+destructive.
 
-1. **Every write-capable command calls the safety guard.** Would have caught the original
-   unguarded `quick-test`, `image-flash`, `surface-scan`, `performance`, `endurance`, and
-   `pipeline`.
-2. **Every write-capable command honours both `--dry-run` spellings.**
-3. **No engine returns a status outside the pipeline vocabulary.** Would have caught the
-   `"fail"` → `"ok"` mapping directly.
-4. **Every command's `describe` output declares its destructive flag correctly.**
+It found a live problem on its first run: `quick-test`, `surface-scan`, `filesystem-check`,
+`performance`, and `pipeline` all reported `destructive: false` while calling the safety guard.
+`quick-test` is the command that wrote to a mounted card at the start of this work — an agent
+reading `describe` would have been told it was harmless. They now declare `destructive: true`
+alongside a `destructive_when` string, since several are only destructive with a particular flag
+and a bare boolean cannot say which.
 
-Roughly 4 of the 24 findings become impossible rather than merely discouraged. The list of
-write-capable commands should be derived, not hand-maintained, or it becomes another thing to
-forget.
-
-*Effort: medium. Value: the highest of anything here.*
+Verified by adding an unguarded `--device` command and watching three checks fail.
 
 #### B. Hermetic-tools CI job
 
@@ -207,10 +206,10 @@ Each item below is tracked as a GitHub issue, collected under
 | Phase | Item | Issue | Rationale |
 | --- | --- | --- | --- |
 | ~~0~~ | ~~**F2**~~ | [#11](https://github.com/grammy-jiang/FlashCrucible/issues/11) | **Done** — four engines, not one |
-| 1 | **B** | [#12](https://github.com/grammy-jiang/FlashCrucible/issues/12) | Currently run by hand; already caught a real host dependency |
-| 1 | **C** | [#13](https://github.com/grammy-jiang/FlashCrucible/issues/13) | Removes a recurring source of avoidable CI failures |
-| 1 | **G** | [#14](https://github.com/grammy-jiang/FlashCrucible/issues/14) | Small; removes guesswork for callers |
-| 2 | **A** | [#15](https://github.com/grammy-jiang/FlashCrucible/issues/15) | Turns the AGENTS.md rules into checks; highest development-side value |
+| ~~1~~ | ~~**B**~~ | [#12](https://github.com/grammy-jiang/FlashCrucible/issues/12) | **Done** — Currently run by hand; already caught a real host dependency |
+| ~~1~~ | ~~**C**~~ | [#13](https://github.com/grammy-jiang/FlashCrucible/issues/13) | **Done** — Removes a recurring source of avoidable CI failures |
+| ~~1~~ | ~~**G**~~ | [#14](https://github.com/grammy-jiang/FlashCrucible/issues/14) | **Done** — Small; removes guesswork for callers |
+| ~~2~~ | ~~**A**~~ | [#15](https://github.com/grammy-jiang/FlashCrucible/issues/15) | **Done** — found five mislabelled commands on its first run |
 | 3 | **E** | [#16](https://github.com/grammy-jiang/FlashCrucible/issues/16) | Makes the output contract complete and verifiable |
 | 4 | **F** | [#17](https://github.com/grammy-jiang/FlashCrucible/issues/17) | Fixes the synchronous-only limitation |
 | 5 | **H** | [#18](https://github.com/grammy-jiang/FlashCrucible/issues/18) | Only once E and F are done |
