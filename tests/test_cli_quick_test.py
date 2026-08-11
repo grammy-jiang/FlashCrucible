@@ -8,6 +8,12 @@ from tfqa.cli.main import app
 from tfqa.core.models import CLIResponse, DeviceInfo
 
 
+def describe_probe_command_stub(*_: object, **__: object) -> list[str]:
+    # The real helper resolves f3probe on PATH, so without this stub the CLI
+    # tests only pass on hosts that happen to have F3 installed.
+    return ["f3probe", "/dev/sdb"]
+
+
 def make_device(path: str, name: str = "sdX") -> DeviceInfo:
     return DeviceInfo(
         path=path,
@@ -47,6 +53,10 @@ class QuickTestCLI(unittest.TestCase):
             patch(
                 "tfqa.tests.capacity.quick.run_quick_capacity", run_quick_capacity_stub
             ),
+            patch(
+                "tfqa.tests.capacity.quick.describe_probe_command",
+                describe_probe_command_stub,
+            ),
         ):
             result = self.runner.invoke(
                 app, ["quick-test", "--device", "/dev/sdb", "--output", "json"]
@@ -72,6 +82,10 @@ class QuickTestCLI(unittest.TestCase):
         with (
             patch("tfqa.core.devices.get_device", get_device),
             patch("tfqa.tests.capacity.quick.run_quick_capacity", fake_run),
+            patch(
+                "tfqa.tests.capacity.quick.describe_probe_command",
+                describe_probe_command_stub,
+            ),
         ):
             result = self.runner.invoke(
                 app, ["quick-test", "--device", "/dev/sdb", "--output", "json"]
@@ -129,6 +143,10 @@ class QuickTestCLI(unittest.TestCase):
             patch(
                 "tfqa.tests.capacity.quick.run_quick_capacity",
                 run_quick_capacity_stub,
+            ),
+            patch(
+                "tfqa.tests.capacity.quick.describe_probe_command",
+                describe_probe_command_stub,
             ),
             patch("tfqa.core.logging.emit_event", emit_event_stub),
         ):
