@@ -257,10 +257,7 @@ def _endurance_stage(profile: EnduranceProfile) -> PipelineStage:
             force=profile.force,
             write_pattern=profile.write_pattern,
         )
-        try:
-            result = endurance_simple.run_simple_endurance(ctx, config)
-        except CAPABILITY_ERRORS as exc:
-            return _skipped(exc.message, exc.error_code, exc.details)
+        result = endurance_simple.run_simple_endurance(ctx, config)
         return result.model_dump()
 
     return PipelineStage("endurance", action)
@@ -274,10 +271,7 @@ def _full_stage(ctx: RunContext) -> dict[str, Any]:
 
 
 def _surface_stage(ctx: RunContext) -> dict[str, Any]:
-    try:
-        return cast(dict[str, Any], surface_scan.run_surface_scan(ctx.device))
-    except CAPABILITY_ERRORS as exc:
-        return _skipped(exc.message, exc.error_code, exc.details)
+    return cast(dict[str, Any], surface_scan.run_surface_scan(ctx.device))
 
 
 def _filesystem_check_stage(ctx: RunContext) -> dict[str, Any]:
@@ -319,10 +313,7 @@ def _skipped(reason: str, error_code: str, details: dict[str, Any]) -> dict[str,
 
 
 def _performance_stage(ctx: RunContext) -> dict[str, Any]:
-    try:
-        return cast(dict[str, Any], perf_basic.run_seq_performance(ctx.device))
-    except CAPABILITY_ERRORS as exc:
-        return _skipped(exc.message, exc.error_code, exc.details)
+    return cast(dict[str, Any], perf_basic.run_seq_performance(ctx.device))
 
 
 def _workload_stage(ctx: RunContext) -> dict[str, Any]:
@@ -444,7 +435,16 @@ def run_pipeline(ctx: RunContext, stages: Iterable[PipelineStage]) -> list[TestR
     results: list[TestResult] = []
     for stage in stages:
         started_at = datetime.now(timezone.utc)
-        raw = stage.action(ctx)
+        try:
+            raw = stage.action(ctx)
+        except CAPABILITY_ERRORS as exc:
+            # Applied here rather than in each stage, so the promise that "a
+            # stage whose tool is missing is skipped and the rest of the plan
+            # still runs" holds for every stage. It previously held for three
+            # of them, while quick-test, filesystem-check, and image-flash let
+            # the error escape and stopped the run -- and the default plan
+            # contains two of those.
+            raw = _skipped(exc.message, exc.error_code, exc.details)
         finished_at = datetime.now(timezone.utc)
         status = normalize_status(raw.get("status"))
         metrics = cast_metrics(raw)

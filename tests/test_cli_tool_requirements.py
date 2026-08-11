@@ -92,16 +92,19 @@ class TestRequirementsStayHonest:
     def test_declared_tools_are_ones_capabilities_probes(self) -> None:
         # Otherwise `describe` could name a tool `capabilities` never reports
         # on, and a caller could not check for it.
+        # No exemptions: a tool `describe` names but `capabilities` never
+        # reports on is one a caller cannot check for before running.
         probed = set(_DEFAULT_TOOLS)
-        # Coreutils are assumed present and are not probed.
-        assumed = {"dd", "cmp", "fsck"}
         for command, spec in _TOOL_REQUIREMENTS.items():
             named = set(spec.get("required_tools", [])) | set(
                 spec.get("optional_tools", [])
             )
-            unknown = named - probed - assumed
-            assert not unknown, f"{command} names untracked tools: {sorted(unknown)}"
+            unknown = named - probed
+            assert not unknown, f"{command} names unprobed tools: {sorted(unknown)}"
 
-    def test_describe_schemas_output_is_still_valid_json(self) -> None:
+    def test_describe_succeeds_and_emits_valid_json(self) -> None:
+        # Asserting only that the output parses would pass on an error envelope.
         result = runner.invoke(app, ["describe", "performance", "--output", "json"])
-        json.loads(result.stdout)
+        assert result.exit_code == 0, result.stdout
+        payload = json.loads(result.stdout)
+        assert payload["status"] == "ok"

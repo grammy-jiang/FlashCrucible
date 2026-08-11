@@ -96,7 +96,10 @@ _TOOL_REQUIREMENTS: dict[str, dict[str, Any]] = {
     "image-flash": {
         "required_tools": ["dd"],
         "optional_tools": ["cmp"],
-        "degradation": "Verification is skipped when cmp is absent; use --no-verify.",
+        "degradation": (
+            "Without cmp, fails with EXT_TOOL_MISSING before writing anything; "
+            "pass --no-verify to flash without verification."
+        ),
     },
     "health": {
         "optional_tools": ["mmc", "sdmon"],

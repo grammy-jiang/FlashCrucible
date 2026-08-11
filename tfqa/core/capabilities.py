@@ -22,7 +22,18 @@ import platform
 from tfqa.core.models import ToolCapability, Capabilities
 
 
-_DEFAULT_TOOLS = ["f3probe", "mmc", "badblocks", "fio", "sdmon"]
+# Every external binary a command declares in `describe`. If `describe` names a
+# tool this list omits, a caller cannot check for it before running the command.
+_DEFAULT_TOOLS = [
+    "f3probe",
+    "mmc",
+    "badblocks",
+    "fio",
+    "sdmon",
+    "dd",
+    "cmp",
+    "fsck",
+]
 
 _cache: Dict[str, ToolCapability] = {}
 

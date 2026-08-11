@@ -112,12 +112,18 @@ def run_image_flash(
         )
 
     _ensure_tool(DD_TOOL)
+    # Check for cmp *before* writing. It used to be checked after dd had already
+    # run, so a host without cmp overwrote the device and only then raised -- the
+    # caller got an environment error for a card that had already been flashed
+    # and could not be verified.
+    if verify:
+        _ensure_tool(CMP_TOOL)
+
     dd_command = _build_dd_command(image_file, device_path, block_size, conv_flags)
     write_result = _run_command(dd_command, write_timeout)
 
     verify_result = None
     if verify:
-        _ensure_tool(CMP_TOOL)
         cmp_command = _build_cmp_command(image_file, device_path, block_size)
         verify_result = _run_command(cmp_command, verify_timeout)
 
