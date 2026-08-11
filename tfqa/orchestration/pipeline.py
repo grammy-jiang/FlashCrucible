@@ -257,6 +257,10 @@ def _endurance_stage(profile: EnduranceProfile) -> PipelineStage:
             pass_count=profile.pass_count,
             force=profile.force,
             write_pattern=profile.write_pattern,
+            # Dropped here, the profile's value was silently replaced by the
+            # default, so the same profile behaved differently under `pipeline`
+            # than under `endurance`.
+            max_mismatches=profile.max_mismatches,
         )
         # `validate_config` rejects a pattern the engine cannot perform, so a
         # profile asking for one fails here rather than reporting a workload it

@@ -88,6 +88,10 @@
                         "string",
                         "null"
                       ]
+                    },
+                    "max_mismatches": {
+                      "type": "integer",
+                      "description": "How many mismatching blocks an endurance pass describes. The count is never capped, only the detail."
                     }
                   },
                   "additionalProperties": true

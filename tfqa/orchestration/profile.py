@@ -35,6 +35,9 @@ class EnduranceProfile:
     pass_count: int = 5
     force: bool = False
     write_pattern: str = "sequential"
+    #: How many mismatching blocks an endurance pass describes. The count is
+    #: never capped, only the detail.
+    max_mismatches: int = 8
 
     @classmethod
     def from_dict(cls, source: dict[str, Any]) -> "EnduranceProfile":
@@ -47,6 +50,9 @@ class EnduranceProfile:
         pass_count = _coerce_positive_int("pass_count", endurance.get("pass_count"), 5)
         force = bool(endurance.get("force", False))
         write_pattern = str(endurance.get("write_pattern", "sequential"))
+        max_mismatches = _coerce_positive_int(
+            "max_mismatches", endurance.get("max_mismatches"), 8
+        )
 
         return cls(
             name=profile_name,
@@ -55,6 +61,7 @@ class EnduranceProfile:
             pass_count=pass_count,
             force=force,
             write_pattern=write_pattern,
+            max_mismatches=max_mismatches,
         )
 
 
@@ -178,6 +185,7 @@ def list_profiles(config: ConfigModel) -> list[dict[str, Any]]:
                 "pass_count": profile.pass_count,
                 "force": profile.force,
                 "write_pattern": profile.write_pattern,
+                "max_mismatches": profile.max_mismatches,
                 "path": str(profile_path),
                 "error": None,
             }

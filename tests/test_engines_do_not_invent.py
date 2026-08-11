@@ -38,6 +38,7 @@ from tfqa.core.errors import (
     ToolNotFoundError,
 )
 from tfqa.core.models import DeviceInfo, EnduranceConfig, RunContext
+from tfqa.core import blockio
 from tfqa.orchestration import pipeline as pipeline_mod
 from tfqa.orchestration.profile import EnduranceProfile
 from tfqa.tests.endurance import simple as endurance_simple
@@ -158,9 +159,17 @@ class TestNoSyntheticFallbacksRemain:
         # The inverse of the test this replaces. While the engine was a stub
         # the guard was "it must not touch the device"; now that it measures,
         # the guard is that its numbers come from somewhere real.
-        source = inspect.getsource(endurance_simple)
-        assert "os.write(" in source
-        assert "os.open(" in source
+        #
+        # It delegates to the shared passes rather than opening the device
+        # itself, so the check follows the I/O to where it lives -- one copy,
+        # so the format written cannot drift from the format verified.
+        engine = inspect.getsource(endurance_simple)
+        assert "write_pass(" in engine
+        assert "verify_pass(" in engine
+
+        shared = inspect.getsource(blockio)
+        assert "os.write(" in shared
+        assert "os.open(" in shared
 
 
 class TestPipelineRecordsSkippedNotOk:
