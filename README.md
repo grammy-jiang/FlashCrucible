@@ -13,7 +13,7 @@ uv run tfqa quick-test --device /dev/sdX --dry-run
 ```
 
 > **Status: early development.** The CLI surface, JSON schemas, safety guardrails, and test
-> harness are real and working. `full-capacity-test` is still a stub. Read [Safety](#safety) and
+> harness are real and working. Read [Safety](#safety) and
 > [Known limitations](#known-limitations) before pointing this at a card you care about.
 
 ---
@@ -38,7 +38,7 @@ commands and read the same results.
 | `detect` | List block devices with size, bus, removability | No |
 | `capabilities` | Probe which external tools are installed | No |
 | `quick-test` | Fast counterfeit / capacity check via `f3probe` | **Yes** |
-| `full-capacity-test` | Destructive full-span write + verify | **Yes** (stub) |
+| `full-capacity-test` | Destructive full-span write + verify, detects wrapping fakes | **Yes** |
 | `surface-scan` | Bad-block sweep via `badblocks`, with health snapshot | **Yes** |
 | `performance` | Throughput / latency / IOPS via `fio`, synthetic fallback | **Yes** |
 | `endurance` | Burn-in loop, profile-driven | **Yes** |
@@ -264,15 +264,17 @@ never touches real hardware.
 
 ## Known limitations
 
-Honest list of what does not work yet. Contributions welcome.
+Honest list of what is constrained. Contributions welcome.
 
-1. **`full-capacity-test` is a stub.** `tfqa/tests/capacity/full.py:21` returns canned numbers
-   without touching the device.
-2. **Pydantic deprecation warnings.** `tfqa/core/models.py` still uses class-based `Config`;
-   migrating to `ConfigDict` is pending.
-3. **Health data needs the right hardware.** Wear data comes from eMMC `EXT_CSD` registers
+1. **Health data needs the right hardware.** Wear data comes from eMMC `EXT_CSD` registers
    (usually root) or from `sdmon` on industrial SD cards. A consumer card in a USB reader can
    supply neither, so `tfqa health` reports what is unavailable and why rather than guessing.
+2. **A wrapping counterfeit's real size needs `quick-test`.** `full-capacity-test` detects the
+   wrap and says so, but recovering the true capacity takes f3probe's binary search, which
+   `tfqa quick-test` runs. The full test only reports a real size when the device stopped
+   accepting writes, where the answer is unambiguous.
+3. **Raw device access needs root.** `full-capacity-test`, `surface-scan --mode destructive`,
+   `image-flash`, and `mmc extcsd read` all need write or ioctl access to the block device.
 
 ## Documentation
 

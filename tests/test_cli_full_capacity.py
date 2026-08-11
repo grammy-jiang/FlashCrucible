@@ -44,10 +44,13 @@ class FullCapacityCLI(unittest.TestCase):
         }
 
         def run_full_capacity_stub(
-            _: DeviceInfo, *, force: bool, yes: bool
+            _: DeviceInfo, *, force: bool, yes: bool, **options: object
         ) -> FullCapacityResult:
             self.assertTrue(force)
             self.assertTrue(yes)
+            # The CLI now forwards the pattern/IO options to the engine.
+            self.assertIn("block_size", options)
+            self.assertIn("seed", options)
             return payload
 
         with (
@@ -94,7 +97,7 @@ class FullCapacityCLI(unittest.TestCase):
         }
 
         def run_full_capacity_failure(
-            _: DeviceInfo, *, force: bool, yes: bool
+            _: DeviceInfo, *, force: bool, yes: bool, **options: object
         ) -> FullCapacityResult:
             return payload
 
@@ -117,6 +120,38 @@ class FullCapacityCLI(unittest.TestCase):
         self.assertIn("Full capacity test FAIL", output)
         self.assertIn("Simulated failure detected.", output)
         self.assertIn("Bad sectors encountered", output)
+
+    def test_bad_options_are_rejected_before_the_dry_run_plan(self):
+        # A dry run must not advertise a plan the real invocation would reject,
+        # and a negative limit must not surface as an impossible span_bytes.
+        device = make_device("/dev/sdb")
+
+        def get_device(_: str) -> DeviceInfo:
+            return device
+
+        for flag, value in (("--limit-bytes", "0"), ("--block-size", "8")):
+            with self.subTest(flag=flag, value=value):
+                with (
+                    patch("tfqa.core.devices.get_device", get_device),
+                    patch("tfqa.tests.capacity.full.run_full_capacity") as run_full,
+                ):
+                    result = self.runner.invoke(
+                        app,
+                        [
+                            "--dry-run",
+                            "full-capacity-test",
+                            "--device",
+                            "/dev/sdb",
+                            flag,
+                            value,
+                            "--output",
+                            "json",
+                        ],
+                    )
+                self.assertEqual(result.exit_code, 2, msg=result.stdout)
+                resp = CLIResponse.model_validate_json(result.stdout)
+                self.assertEqual(resp.error_code, "INVALID_ARGUMENT")
+                run_full.assert_not_called()
 
     def test_full_capacity_requires_safety_override(self):
         device = make_device("/dev/sda")

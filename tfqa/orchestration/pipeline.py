@@ -41,6 +41,21 @@ _VALID_STATUSES = {
     "error",
 }
 
+# The test engines report "fail"; the pipeline vocabulary says "failed". Unmapped
+# values used to fall through to "ok", so a counterfeit detected by quick-test or
+# full-capacity-test was recorded as a passing stage.
+_STATUS_SYNONYMS = {
+    "fail": "failed",
+    "failure": "failed",
+    "failing": "failed",
+    "pass": "ok",
+    "passed": "ok",
+    "success": "ok",
+    "succeeded": "ok",
+    "warn": "warning",
+    "skip": "skipped",
+}
+
 _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_STAGE_ORDER = [
@@ -95,15 +110,25 @@ def plan_is_destructive(stage_names: Iterable[str]) -> bool:
 
 
 def normalize_status(raw_status: Any | None) -> TestStatus:
+    """Map an engine's status onto the pipeline vocabulary.
+
+    A stage that reports nothing is treated as having completed cleanly, but an
+    unrecognised value becomes "error" rather than "ok": we do not know that it
+    succeeded, and defaulting to success is how a detected counterfeit ended up
+    recorded as a passing stage.
+    """
+
     if raw_status is None:
         return "ok"
     if isinstance(raw_status, str):
-        candidate = raw_status.lower()
+        candidate = raw_status.lower().strip()
     else:
-        candidate = str(raw_status).lower()
+        candidate = str(raw_status).lower().strip()
+    candidate = _STATUS_SYNONYMS.get(candidate, candidate)
     if candidate in _VALID_STATUSES:
         return cast(TestStatus, candidate)
-    return "ok"
+    _LOGGER.warning("Unrecognised stage status %r; treating as error", raw_status)
+    return "error"
 
 
 @dataclass(frozen=True)
