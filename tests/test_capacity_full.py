@@ -75,7 +75,7 @@ class BlockPattern(TestCase):
     def test_encodes_its_own_offset(self):
         # This is what lets a mismatch say where the returned data belongs.
         block = full.block_pattern(4096, 512, 0)
-        self.assertEqual(full._decode_offset(block), 4096)
+        self.assertEqual(full.decode_offset(block), 4096)
 
 
 class HealthyDevice(TempDirCase):

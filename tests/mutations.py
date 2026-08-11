@@ -86,7 +86,7 @@ MUTANTS: dict[str, Mutant] = {
         ),
     ),
     "wrap-detection-blinded": Mutant(
-        target="tfqa.tests.capacity.full._decode_offset",
+        target="tfqa.tests.capacity.full.decode_offset",
         # A wrapping counterfeit is only distinguishable from ordinary
         # corruption by the offset the block claims to hold.
         replacement=lambda block, span=None: None,
