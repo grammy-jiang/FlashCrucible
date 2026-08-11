@@ -40,6 +40,7 @@ class FullCapacityCLI(unittest.TestCase):
             "duration_seconds": 600.0,
             "throughput_mbps": 120.0,
             "issues": [],
+            "warnings": [],
             "details": {},
         }
 
@@ -93,6 +94,7 @@ class FullCapacityCLI(unittest.TestCase):
             "issues": [
                 "Bad sectors encountered",
             ],
+            "warnings": [],
             "details": {},
         }
 

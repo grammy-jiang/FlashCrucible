@@ -35,6 +35,7 @@ from typing import Any, Callable, Literal, TypedDict, cast
 
 from tfqa.core.blockio import (
     HEADER,
+    FlushOutcome,
     block_pattern,
     decode_offset,
     flush_and_drop_cache,
@@ -49,6 +50,7 @@ __all__ = [
     "HEADER",
     "block_pattern",
     "decode_offset",
+    "FlushOutcome",
     "flush_and_drop_cache",
     "run_full_capacity",
     "validate_options",
@@ -76,6 +78,9 @@ class FullCapacityResult(TypedDict):
     duration_seconds: float
     throughput_mbps: float
     issues: list[str]
+    #: Something that weakens the evidence rather than something the device got
+    #: wrong. Warnings never fail the run; issues do.
+    warnings: list[str]
     details: dict[str, object]
 
 
@@ -85,10 +90,16 @@ def _write_pass(
     block_size: int,
     seed: int,
     progress: ProgressFn | None,
-) -> tuple[int, list[str]]:
-    """Fill `span` bytes with the pattern. Returns (bytes written, issues)."""
+) -> tuple[int, list[str], list[str]]:
+    """Fill `span` bytes with the pattern.
+
+    Returns (bytes written, issues, warnings). Warnings do not fail the run;
+    they record something that weakens the evidence rather than something the
+    device got wrong.
+    """
 
     issues: list[str] = []
+    warnings: list[str] = []
     written = 0
     fd = os.open(path, os.O_WRONLY)
     try:
@@ -111,15 +122,24 @@ def _write_pass(
             written += size
             if progress:
                 progress(written, span, "write")
-        flush_error = flush_and_drop_cache(fd)
-        if flush_error:
+        flushed = flush_and_drop_cache(fd)
+        if flushed.sync_error:
             issues.append(
-                f"{flush_error} after {written} bytes; the device did not "
-                "commit the data it accepted"
+                f"{flushed.sync_error} after {written} bytes; the device did "
+                "not commit the data it accepted"
+            )
+        if flushed.cache_error:
+            # A warning, not an issue: the write itself may be sound. What is
+            # in doubt is the verify pass, which could be answered from RAM --
+            # and a wrapping counterfeit passes cleanly when that happens.
+            warnings.append(
+                f"{flushed.cache_error}; the verify pass may have been served "
+                "from the page cache, so a device that silently wraps its "
+                "writes could still appear to pass"
             )
     finally:
         os.close(fd)
-    return written, issues
+    return written, issues, warnings
 
 
 def _verify_pass(
@@ -249,7 +269,9 @@ def run_full_capacity(
         )
 
     started = time.monotonic()
-    written, write_issues = _write_pass(device.path, span, block_size, seed, progress)
+    written, write_issues, warnings = _write_pass(
+        device.path, span, block_size, seed, progress
+    )
     verified, mismatches, read_issues = _verify_pass(
         device.path, written, block_size, seed, max_mismatches, progress
     )
@@ -312,5 +334,6 @@ def run_full_capacity(
         duration_seconds=round(duration, 3),
         throughput_mbps=round(throughput, 2),
         issues=issues,
+        warnings=warnings,
         details=details,
     )

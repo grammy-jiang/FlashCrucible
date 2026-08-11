@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import os
 import struct
+from typing import NamedTuple
 
 from tfqa.core.errors import ArgumentError
 
@@ -73,28 +74,50 @@ def decode_offset(block: bytes, span: int | None = None) -> int | None:
     return offset
 
 
-def flush_and_drop_cache(fd: int) -> str | None:
-    """Commit the writes and ask the kernel to forget the pages.
+class FlushOutcome(NamedTuple):
+    """What happened when the writes were committed and the cache dropped.
 
-    Returns a description of an fsync failure, or None. The flush is where a
-    device reports the media errors that buffered writes hid, so swallowing it
-    would let dirty pages satisfy the verify reads and the test pass even though
-    nothing reached the card.
-
-    Dropping the cache matters for the same reason: without it the verify pass
-    reads back from RAM and a counterfeit passes cleanly.
+    Two separate problems, kept separate. A failed `fsync` means the data never
+    reached the card. A failed cache drop means the data may have reached it but
+    the verify pass could be answered from RAM -- the write is fine, the
+    *evidence* is not.
     """
 
-    error: str | None = None
+    sync_error: str | None = None
+    cache_error: str | None = None
+
+
+def flush_and_drop_cache(fd: int) -> FlushOutcome:
+    """Commit the writes and ask the kernel to forget the pages.
+
+    The flush is where a device reports the media errors that buffered writes
+    hid, so swallowing it would let dirty pages satisfy the verify reads and the
+    test pass even though nothing reached the card.
+
+    Dropping the cache matters for the same reason: without it the verify pass
+    reads back from RAM and a counterfeit passes cleanly. A failure to drop it
+    is therefore reported, not discarded.
+
+    A clean result is **not** a guarantee that the cache is cold.
+    `POSIX_FADV_DONTNEED` is advisory: the kernel may decline to evict pages and
+    still return success, and on some filesystems the call does nothing at all.
+    It is the strongest request available, not a promise -- which is why the
+    verify pass also reopens the device rather than relying on this alone.
+    """
+
+    sync_error: str | None = None
     try:
         os.fsync(fd)
     except OSError as exc:
-        error = f"fsync failed: {exc.strerror or exc}"
+        sync_error = f"fsync failed: {exc.strerror or exc}"
+
     fadvise = getattr(os, "posix_fadvise", None)
     if fadvise is None:  # pragma: no cover - platform guard
-        return error
+        return FlushOutcome(sync_error, "posix_fadvise is unavailable on this platform")
     try:
         fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
-    except OSError:  # pragma: no cover - advisory only
-        pass
-    return error
+    except OSError as exc:
+        return FlushOutcome(
+            sync_error, f"could not drop the page cache: {exc.strerror or exc}"
+        )
+    return FlushOutcome(sync_error, None)
