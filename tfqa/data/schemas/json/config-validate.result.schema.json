@@ -2,22 +2,82 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://flashcrucible.local/schemas/config-validate.result.schema.json",
   "title": "tfqa config validate result",
-  "description": "Whether the merged configuration is usable. Validates CLIResponse.data for `tfqa config validate`; the envelope itself is cli_response.schema.json.",
-  "schema_version": 1,
+  "description": "Whether the merged configuration is usable. Validates the whole CLIResponse for `tfqa config validate`. The shape of `data` depends on `status`, so it is constrained conditionally: an error response carries `details` or nothing.",
+  "schema_version": 2,
   "type": "object",
+  "required": [
+    "status",
+    "command",
+    "message",
+    "data"
+  ],
   "properties": {
-    "config": {
+    "status": {
+      "enum": [
+        "ok",
+        "fail",
+        "error",
+        "aborted"
+      ]
+    },
+    "command": {
+      "const": "config validate"
+    },
+    "data": {
       "type": "object"
-    },
-    "valid": {
-      "type": "boolean"
-    },
-    "issues": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "ok",
+              "fail"
+            ]
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "valid"
+            ],
+            "properties": {
+              "valid": {
+                "type": "boolean"
+              },
+              "files": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "details": {
+                "type": "object"
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      }
+    }
+  ],
   "additionalProperties": true
 }

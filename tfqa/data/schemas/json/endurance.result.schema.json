@@ -2,83 +2,186 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://flashcrucible.local/schemas/endurance.result.schema.json",
   "title": "tfqa endurance result",
-  "description": "Endurance run. The engine is unimplemented and refuses. Validates CLIResponse.data for `tfqa endurance`; the envelope itself is cli_response.schema.json.",
-  "schema_version": 1,
+  "description": "Endurance run. The engine is unimplemented and refuses. Validates the whole CLIResponse for `tfqa endurance`. The shape of `data` depends on `status`, so it is constrained conditionally: an error response carries `details` or nothing.",
+  "schema_version": 2,
   "type": "object",
+  "required": [
+    "status",
+    "command",
+    "message",
+    "data"
+  ],
   "properties": {
-    "metrics": {
-      "type": "object",
-      "description": "Measured values only. An engine that cannot measure refuses.",
-      "additionalProperties": {
-        "type": [
-          "number",
-          "integer",
-          "boolean",
-          "string"
-        ]
-      }
-    },
-    "details": {
-      "type": "object"
-    },
     "status": {
-      "type": "string",
       "enum": [
         "ok",
         "fail",
-        "skipped",
-        "warning",
-        "error"
+        "error",
+        "aborted"
       ]
     },
-    "device": {
-      "type": "object"
+    "command": {
+      "const": "endurance"
     },
-    "plan": {
-      "type": "object",
-      "description": "What the command would do; present only under --dry-run.",
-      "required": [
-        "device"
-      ],
-      "properties": {
-        "safety": {
-          "type": "object",
-          "required": [
-            "would_run",
-            "error_code",
-            "reason",
-            "details"
-          ],
-          "properties": {
-            "would_run": {
-              "type": "boolean"
-            },
-            "error_code": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "reason": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "details": {
-              "type": "object"
-            }
+    "data": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "ok",
+              "fail"
+            ]
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "result"
+                ],
+                "properties": {
+                  "result": {
+                    "type": "object",
+                    "required": [
+                      "name",
+                      "status",
+                      "metrics"
+                    ],
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "enum": [
+                          "ok",
+                          "fail",
+                          "failed",
+                          "skipped",
+                          "warning",
+                          "error"
+                        ]
+                      },
+                      "started_at": {
+                        "type": "string"
+                      },
+                      "finished_at": {
+                        "type": "string"
+                      },
+                      "duration_seconds": {
+                        "type": "number"
+                      },
+                      "metrics": {
+                        "type": "object",
+                        "description": "Measured values only. An engine that cannot measure refuses rather than estimating.",
+                        "additionalProperties": {
+                          "type": [
+                            "number",
+                            "integer",
+                            "boolean",
+                            "string"
+                          ]
+                        }
+                      },
+                      "details": {
+                        "type": "object"
+                      },
+                      "warnings": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "logs_path": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    }
+                  }
+                },
+                "additionalProperties": true
+              },
+              {
+                "type": "object",
+                "required": [
+                  "plan"
+                ],
+                "properties": {
+                  "plan": {
+                    "type": "object",
+                    "required": [
+                      "device"
+                    ],
+                    "properties": {
+                      "device": {
+                        "type": "string"
+                      },
+                      "safety": {
+                        "type": "object",
+                        "required": [
+                          "would_run",
+                          "error_code",
+                          "reason",
+                          "details"
+                        ],
+                        "properties": {
+                          "would_run": {
+                            "type": "boolean"
+                          },
+                          "error_code": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "reason": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "details": {
+                            "type": "object"
+                          }
+                        }
+                      }
+                    },
+                    "additionalProperties": true
+                  }
+                },
+                "additionalProperties": true
+              }
+            ]
           }
         }
       },
-      "additionalProperties": true
-    },
-    "profile": {
-      "type": [
-        "string",
-        "null"
-      ]
+      "else": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "details": {
+                "type": "object"
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      }
     }
-  },
+  ],
   "additionalProperties": true
 }

@@ -127,6 +127,12 @@ schemas now ship alongside the envelope, `describe` carries a `result_schema` po
 `tests/test_result_schemas.py` validates the **real output of every command** against its schema
 rather than only checking that the files parse -- a schema nobody validates against drifts.
 
+Each schema validates the whole `CLIResponse` and conditions the shape of `data` on `status`,
+because the payload legitimately differs between a success, a dry run, and an error. A first
+attempt constrained `data` alone with nothing required, so `{}` validated as a successful
+`quick-test` result and three schemas described a layout the commands never emitted -- the tests
+passed because the schemas asserted almost nothing.
+
 It found a contract inconsistency immediately: `workload-smallfiles` named the target
 `device_path` in its dry-run plan while every other command used `device`, so a caller could not
 read the target out of a plan uniformly. `_emit_dry_run` now guarantees the key rather than

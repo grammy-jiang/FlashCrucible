@@ -2,62 +2,123 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://flashcrucible.local/schemas/history.result.schema.json",
   "title": "tfqa history result",
-  "description": "Recorded runs, most recent first. Validates CLIResponse.data for `tfqa history`; the envelope itself is cli_response.schema.json.",
-  "schema_version": 1,
+  "description": "Recorded runs, most recent first. Validates the whole CLIResponse for `tfqa history`. The shape of `data` depends on `status`, so it is constrained conditionally: an error response carries `details` or nothing.",
+  "schema_version": 2,
   "type": "object",
+  "required": [
+    "status",
+    "command",
+    "message",
+    "data"
+  ],
   "properties": {
-    "entries": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": [
-          "run_id",
-          "command",
-          "status"
-        ],
+    "status": {
+      "enum": [
+        "ok",
+        "fail",
+        "error",
+        "aborted"
+      ]
+    },
+    "command": {
+      "const": "history"
+    },
+    "data": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
         "properties": {
-          "timestamp": {
-            "type": "string"
-          },
-          "run_id": {
-            "type": "string"
-          },
-          "command": {
-            "type": "string"
-          },
-          "device_path": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "status": {
-            "type": "string"
-          },
-          "message": {
-            "type": [
-              "string",
-              "null"
+            "enum": [
+              "ok",
+              "fail"
             ]
-          },
-          "stage_count": {
-            "type": "integer"
-          },
-          "profile": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "metadata": {
-            "type": "object"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "entries"
+            ],
+            "properties": {
+              "entries": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "run_id",
+                    "command",
+                    "status"
+                  ],
+                  "properties": {
+                    "timestamp": {
+                      "type": "string"
+                    },
+                    "run_id": {
+                      "type": "string"
+                    },
+                    "command": {
+                      "type": "string"
+                    },
+                    "device_path": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "stage_count": {
+                      "type": "integer"
+                    },
+                    "profile": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "metadata": {
+                      "type": "object"
+                    }
+                  },
+                  "additionalProperties": true
+                }
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "details": {
+                "type": "object"
+              }
+            },
+            "additionalProperties": true
           }
         }
       }
     }
-  },
-  "additionalProperties": true,
-  "required": [
-    "entries"
-  ]
+  ],
+  "additionalProperties": true
 }

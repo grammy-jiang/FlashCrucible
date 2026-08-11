@@ -2,64 +2,126 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://flashcrucible.local/schemas/health.result.schema.json",
   "title": "tfqa health result",
-  "description": "Card identity and wear, with the source of each value. Validates CLIResponse.data for `tfqa health`; the envelope itself is cli_response.schema.json.",
-  "schema_version": 1,
+  "description": "Card identity and wear, with the source of each value. Validates the whole CLIResponse for `tfqa health`. The shape of `data` depends on `status`, so it is constrained conditionally: an error response carries `details` or nothing.",
+  "schema_version": 2,
   "type": "object",
+  "required": [
+    "status",
+    "command",
+    "message",
+    "data"
+  ],
   "properties": {
-    "device": {
-      "type": "object"
+    "status": {
+      "enum": [
+        "ok",
+        "fail",
+        "error",
+        "aborted"
+      ]
     },
-    "snapshot": {
-      "type": "object",
-      "required": [
-        "source",
-        "available",
-        "cid",
-        "health",
-        "sources"
-      ],
-      "properties": {
-        "source": {
-          "type": "string"
-        },
-        "available": {
-          "type": "boolean",
-          "description": "False when no source produced wear data."
-        },
-        "cid": {
-          "type": "object"
-        },
-        "health": {
-          "type": "object"
-        },
-        "sources": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "object",
-            "required": [
-              "available"
-            ],
-            "properties": {
-              "available": {
-                "type": "boolean"
-              },
-              "error_code": {
-                "type": "string"
-              },
-              "reason": {
-                "type": "string"
-              }
-            }
+    "command": {
+      "const": "health"
+    },
+    "data": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "ok",
+              "fail"
+            ]
           }
         },
-        "details": {
-          "type": "object"
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "snapshot"
+            ],
+            "properties": {
+              "device": {
+                "type": "object"
+              },
+              "snapshot": {
+                "type": "object",
+                "required": [
+                  "source",
+                  "available",
+                  "cid",
+                  "health",
+                  "sources"
+                ],
+                "properties": {
+                  "source": {
+                    "type": "string"
+                  },
+                  "available": {
+                    "type": "boolean",
+                    "description": "False when no source produced wear data."
+                  },
+                  "cid": {
+                    "type": "object"
+                  },
+                  "health": {
+                    "type": "object"
+                  },
+                  "sources": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "object",
+                      "required": [
+                        "available"
+                      ],
+                      "properties": {
+                        "available": {
+                          "type": "boolean"
+                        },
+                        "error_code": {
+                          "type": "string"
+                        },
+                        "reason": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  },
+                  "details": {
+                    "type": "object"
+                  }
+                },
+                "additionalProperties": true
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "details": {
+                "type": "object"
+              }
+            },
+            "additionalProperties": true
+          }
         }
       }
     }
-  },
-  "additionalProperties": true,
-  "required": [
-    "snapshot"
-  ]
+  ],
+  "additionalProperties": true
 }

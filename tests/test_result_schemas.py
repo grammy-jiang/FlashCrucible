@@ -21,7 +21,8 @@ from typer.testing import CliRunner
 
 from tfqa.cli.main import _collect_command_map, _result_schema_name, app
 from tfqa.core import paths
-from tfqa.core.models import CLIResponse, DeviceInfo
+from tfqa.core.errors import DeviceNotFoundError
+from tfqa.core.models import DeviceInfo
 
 runner = CliRunner()
 
@@ -71,8 +72,9 @@ def _schema(command: str) -> Draft7Validator:
     return Draft7Validator(document)
 
 
-def _validate(command: str, data: dict[str, object]) -> None:
-    errors = sorted(_schema(command).iter_errors(data), key=lambda e: list(e.path))
+def _validate(command: str, response: dict[str, object]) -> None:
+    """Validate the whole envelope: the shape of `data` depends on `status`."""
+    errors = sorted(_schema(command).iter_errors(response), key=lambda e: list(e.path))
     assert not errors, "\n".join(
         f"{command}: {'/'.join(str(p) for p in e.path) or '<root>'}: {e.message}"
         for e in errors
@@ -119,26 +121,17 @@ class TestRealOutputValidates:
     def test_read_only_commands(self, command: str) -> None:
         result = runner.invoke(app, [command, "--output", "json"])
         assert result.exit_code == 0, result.stdout
-        _validate(command, CLIResponse.model_validate_json(result.stdout).data)
+        _validate(command, json.loads(result.stdout))
 
     @pytest.mark.parametrize("command", DEVICE_COMMANDS)
     def test_device_commands_under_dry_run(self, command: str) -> None:
-        extra = ["--image-path", __file__] if command == "image-flash" else []
         with patch("tfqa.core.devices.get_device", return_value=DEVICE):
             result = runner.invoke(
                 app,
-                [
-                    "--dry-run",
-                    command,
-                    "--device",
-                    DEVICE.path,
-                    *extra,
-                    "--output",
-                    "json",
-                ],
+                ["--dry-run", command, "--device", DEVICE.path, "--output", "json"],
             )
         assert result.exit_code == 0, result.stdout
-        _validate(command, CLIResponse.model_validate_json(result.stdout).data)
+        _validate(command, json.loads(result.stdout))
 
     def test_image_flash_under_dry_run(self) -> None:
         with patch("tfqa.core.devices.get_device", return_value=DEVICE):
@@ -156,42 +149,111 @@ class TestRealOutputValidates:
                 ],
             )
         assert result.exit_code == 0, result.stdout
-        _validate("image-flash", CLIResponse.model_validate_json(result.stdout).data)
+        _validate("image-flash", json.loads(result.stdout))
 
     def test_describe_validates_against_its_own_schema(self) -> None:
         result = runner.invoke(app, ["describe", "quick-test", "--output", "json"])
         assert result.exit_code == 0, result.stdout
-        _validate("describe", CLIResponse.model_validate_json(result.stdout).data)
+        _validate("describe", json.loads(result.stdout))
 
     def test_config_show(self) -> None:
         result = runner.invoke(app, ["config", "show", "--output", "json"])
         assert result.exit_code == 0, result.stdout
-        _validate("config show", CLIResponse.model_validate_json(result.stdout).data)
+        _validate("config show", json.loads(result.stdout))
+
+
+class TestErrorResponsesValidate:
+    """Validation must not fail exactly when automation needs the envelope."""
+
+    def test_config_validate(self) -> None:
+        result = runner.invoke(app, ["config", "validate", "--output", "json"])
+        assert result.exit_code == 0, result.stdout
+        _validate("config validate", json.loads(result.stdout))
+
+    def test_detect_reports_a_device_error(self) -> None:
+        with patch(
+            "tfqa.core.devices.discover_devices",
+            side_effect=DeviceNotFoundError("/dev/nope"),
+        ):
+            result = runner.invoke(app, ["detect", "--output", "json"])
+        payload = json.loads(result.stdout)
+        assert payload["status"] == "error"
+        _validate("detect", payload)
+
+    def test_an_error_payload_may_be_empty(self) -> None:
+        # An unexpected host failure emits data={}; the schema must accept it,
+        # since requiring `devices` unconditionally rejected exactly the
+        # responses automation most needs to inspect.
+        _validate(
+            "detect",
+            {"status": "error", "command": "detect", "message": "boom", "data": {}},
+        )
 
 
 class TestSchemasActuallyConstrain:
     """A schema that accepts anything is worse than none: it implies a check."""
 
-    def test_detect_rejects_a_device_without_a_path(self) -> None:
-        bad = {
-            "devices": [
-                {"size_bytes": 1, "is_removable": True, "is_system_disk": False}
-            ]
-        }
-        assert list(_schema("detect").iter_errors(bad))
-
-    def test_health_rejects_a_snapshot_without_availability(self) -> None:
-        bad = {"snapshot": {"source": "sysfs", "cid": {}, "health": {}, "sources": {}}}
-        assert list(_schema("health").iter_errors(bad))
-
-    def test_capabilities_rejects_a_tool_without_availability(self) -> None:
-        bad = {"external_tools": {"fio": {"name": "fio"}}}
-        assert list(_schema("capabilities").iter_errors(bad))
-
-    def test_profiles_rejects_an_entry_without_a_path(self) -> None:
-        assert list(_schema("profiles").iter_errors({"profiles": [{"name": "x"}]}))
-
-    def test_a_dry_run_plan_must_name_the_device(self) -> None:
+    @pytest.mark.parametrize("command", DEVICE_COMMANDS + ["detect", "health"])
+    def test_an_empty_payload_is_not_a_successful_result(self, command: str) -> None:
+        # With nothing required and additionalProperties open, `{}` validated
+        # as a successful result for every engine command.
         assert list(
-            _schema("quick-test").iter_errors({"plan": {"free_space_only": True}})
+            _schema(command).iter_errors(
+                {"status": "ok", "command": command, "message": "m", "data": {}}
+            )
+        )
+
+    def test_the_wrapper_shape_is_modelled(self) -> None:
+        # filesystem-check emits {"result": ...}; a schema advertising metrics
+        # at the root validated only because unknown keys were accepted, and
+        # taught discovery clients the wrong layout.
+        good = {
+            "status": "ok",
+            "command": "filesystem-check",
+            "message": "m",
+            "data": {"result": {"status": "ok", "returncode": 0}},
+        }
+        assert not list(_schema("filesystem-check").iter_errors(good))
+        bad = {**good, "data": {"metrics": {}}}
+        assert list(_schema("filesystem-check").iter_errors(bad))
+
+    def test_a_plan_device_must_be_a_string(self) -> None:
+        assert list(
+            _schema("quick-test").iter_errors(
+                {
+                    "status": "ok",
+                    "command": "quick-test",
+                    "message": "m",
+                    "data": {"plan": {"device": {"path": "/dev/sdz"}}},
+                }
+            )
+        )
+
+    @pytest.mark.parametrize(
+        "command,data",
+        [
+            (
+                "detect",
+                {
+                    "devices": [
+                        {"size_bytes": 1, "is_removable": True, "is_system_disk": False}
+                    ]
+                },
+            ),
+            (
+                "health",
+                {"snapshot": {"source": "s", "cid": {}, "health": {}, "sources": {}}},
+            ),
+            ("capabilities", {"external_tools": {"fio": {"name": "fio"}}}),
+            ("profiles", {"profiles": [{"name": "x"}]}),
+            ("quick-test", {"plan": {"free_space_only": True}}),
+        ],
+    )
+    def test_malformed_success_payloads_are_rejected(
+        self, command: str, data: dict[str, object]
+    ) -> None:
+        assert list(
+            _schema(command).iter_errors(
+                {"status": "ok", "command": command, "message": "m", "data": data}
+            )
         )

@@ -2,83 +2,160 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://flashcrucible.local/schemas/quick-test.result.schema.json",
   "title": "tfqa quick-test result",
-  "description": "Counterfeit and capacity check via f3probe. Validates CLIResponse.data for `tfqa quick-test`; the envelope itself is cli_response.schema.json.",
-  "schema_version": 1,
+  "description": "Counterfeit and capacity check via f3probe. Validates the whole CLIResponse for `tfqa quick-test`. The shape of `data` depends on `status`, so it is constrained conditionally: an error response carries `details` or nothing.",
+  "schema_version": 2,
   "type": "object",
+  "required": [
+    "status",
+    "command",
+    "message",
+    "data"
+  ],
   "properties": {
-    "metrics": {
-      "type": "object",
-      "description": "Measured values only. An engine that cannot measure refuses.",
-      "additionalProperties": {
-        "type": [
-          "number",
-          "integer",
-          "boolean",
-          "string"
-        ]
-      }
-    },
-    "details": {
-      "type": "object"
-    },
     "status": {
-      "type": "string",
       "enum": [
         "ok",
         "fail",
-        "skipped",
-        "warning",
-        "error"
+        "error",
+        "aborted"
       ]
     },
-    "device": {
-      "type": "object"
+    "command": {
+      "const": "quick-test"
     },
-    "plan": {
-      "type": "object",
-      "description": "What the command would do; present only under --dry-run.",
-      "required": [
-        "device"
-      ],
-      "properties": {
-        "safety": {
-          "type": "object",
-          "required": [
-            "would_run",
-            "error_code",
-            "reason",
-            "details"
-          ],
-          "properties": {
-            "would_run": {
-              "type": "boolean"
-            },
-            "error_code": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "reason": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "details": {
-              "type": "object"
-            }
+    "data": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "ok",
+              "fail"
+            ]
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "metrics"
+                ],
+                "properties": {
+                  "metrics": {
+                    "type": "object",
+                    "description": "Measured values only. An engine that cannot measure refuses rather than estimating.",
+                    "additionalProperties": {
+                      "type": [
+                        "number",
+                        "integer",
+                        "boolean",
+                        "string"
+                      ]
+                    }
+                  },
+                  "details": {
+                    "type": "object"
+                  },
+                  "status": {
+                    "enum": [
+                      "ok",
+                      "fail",
+                      "skipped",
+                      "warning",
+                      "error"
+                    ]
+                  },
+                  "device": {
+                    "type": "object"
+                  },
+                  "fake_detected": {
+                    "type": "boolean"
+                  },
+                  "coverage_percent": {
+                    "type": "number"
+                  }
+                },
+                "additionalProperties": true
+              },
+              {
+                "type": "object",
+                "required": [
+                  "plan"
+                ],
+                "properties": {
+                  "plan": {
+                    "type": "object",
+                    "required": [
+                      "device"
+                    ],
+                    "properties": {
+                      "device": {
+                        "type": "string"
+                      },
+                      "safety": {
+                        "type": "object",
+                        "required": [
+                          "would_run",
+                          "error_code",
+                          "reason",
+                          "details"
+                        ],
+                        "properties": {
+                          "would_run": {
+                            "type": "boolean"
+                          },
+                          "error_code": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "reason": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "details": {
+                            "type": "object"
+                          }
+                        }
+                      }
+                    },
+                    "additionalProperties": true
+                  }
+                },
+                "additionalProperties": true
+              }
+            ]
           }
         }
       },
-      "additionalProperties": true
-    },
-    "fake_detected": {
-      "type": "boolean"
-    },
-    "coverage_percent": {
-      "type": "number"
+      "else": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "details": {
+                "type": "object"
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      }
     }
-  },
+  ],
   "additionalProperties": true
 }

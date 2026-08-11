@@ -2,19 +2,82 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://flashcrucible.local/schemas/automation-report.result.schema.json",
   "title": "tfqa automation-report result",
-  "description": "History entry, summary, and trends bundled for automation. Validates CLIResponse.data for `tfqa automation-report`; the envelope itself is cli_response.schema.json.",
-  "schema_version": 1,
+  "description": "History entry, summary, and trends bundled for automation. Validates the whole CLIResponse for `tfqa automation-report`. The shape of `data` depends on `status`, so it is constrained conditionally: an error response carries `details` or nothing.",
+  "schema_version": 2,
   "type": "object",
+  "required": [
+    "status",
+    "command",
+    "message",
+    "data"
+  ],
   "properties": {
-    "report": {
-      "type": "object"
-    },
-    "remote_push": {
-      "type": [
-        "array",
-        "null"
+    "status": {
+      "enum": [
+        "ok",
+        "fail",
+        "error",
+        "aborted"
       ]
+    },
+    "command": {
+      "const": "automation-report"
+    },
+    "data": {
+      "type": "object"
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "ok",
+              "fail"
+            ]
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "report"
+            ],
+            "properties": {
+              "report": {
+                "type": "object"
+              },
+              "remote_push": {
+                "type": [
+                  "array",
+                  "null"
+                ]
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "details": {
+                "type": "object"
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      }
+    }
+  ],
   "additionalProperties": true
 }

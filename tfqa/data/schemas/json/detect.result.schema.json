@@ -2,75 +2,135 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://flashcrucible.local/schemas/detect.result.schema.json",
   "title": "tfqa detect result",
-  "description": "Block devices discovered on the host. Validates CLIResponse.data for `tfqa detect`; the envelope itself is cli_response.schema.json.",
-  "schema_version": 1,
+  "description": "Block devices discovered on the host. Validates the whole CLIResponse for `tfqa detect`. The shape of `data` depends on `status`, so it is constrained conditionally: an error response carries `details` or nothing.",
+  "schema_version": 2,
   "type": "object",
+  "required": [
+    "status",
+    "command",
+    "message",
+    "data"
+  ],
   "properties": {
-    "devices": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": [
-          "path",
-          "size_bytes",
-          "is_removable",
-          "is_system_disk"
-        ],
+    "status": {
+      "enum": [
+        "ok",
+        "fail",
+        "error",
+        "aborted"
+      ]
+    },
+    "command": {
+      "const": "detect"
+    },
+    "data": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
         "properties": {
-          "path": {
-            "type": "string"
-          },
-          "name": {
-            "type": [
-              "string",
-              "null"
+          "status": {
+            "enum": [
+              "ok",
+              "fail"
             ]
-          },
-          "model": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "vendor": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "serial": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "size_bytes": {
-            "type": "integer"
-          },
-          "is_removable": {
-            "type": "boolean"
-          },
-          "is_system_disk": {
-            "type": "boolean"
-          },
-          "mountpoints": {
-            "type": "array",
-            "items": {
-              "type": "object"
-            }
-          },
-          "transport": {
-            "type": [
-              "string",
-              "null"
-            ]
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "devices"
+            ],
+            "properties": {
+              "devices": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "path",
+                    "size_bytes",
+                    "is_removable",
+                    "is_system_disk"
+                  ],
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "model": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "vendor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "serial": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "size_bytes": {
+                      "type": "integer"
+                    },
+                    "is_removable": {
+                      "type": "boolean"
+                    },
+                    "is_system_disk": {
+                      "type": "boolean"
+                    },
+                    "mountpoints": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "transport": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "details": {
+                "type": "object"
+              }
+            },
+            "additionalProperties": true
           }
         }
       }
     }
-  },
-  "additionalProperties": true,
-  "required": [
-    "devices"
-  ]
+  ],
+  "additionalProperties": true
 }
