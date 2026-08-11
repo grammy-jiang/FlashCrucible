@@ -1,0 +1,17 @@
+{
+  "status": "ok",
+  "command": "describe",
+  "data": {
+    "name": "quick-test",
+    "summary": "Fast capacity/authenticity check using F3 or native sampling.",
+    "destructive": false,
+    "requires_root": false,
+    "arguments": [
+      {"name": "device", "type": "string", "required": true}
+    ],
+    "options": [
+      {"name": "--output", "type": "string", "default": "human"},
+      {"name": "--non-interactive", "type": "bool", "default": false}
+    ]
+  }
+}
