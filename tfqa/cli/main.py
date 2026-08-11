@@ -122,6 +122,11 @@ _TOOL_REQUIREMENTS: dict[str, dict[str, Any]] = {
     },
 }
 
+# `describe` is what an agent reads before deciding whether something is safe
+# to run, so anything that can write to the device declares itself destructive
+# even when that depends on a flag -- `destructive_when` says on what.
+# quick-test, surface-scan, filesystem-check, performance, and pipeline all
+# reported destructive=False while calling the safety guard.
 _DESCRIBE_OVERRIDES: dict[str, dict[str, Any]] = {
     "automation-report": {"destructive": False, "requires_root": False},
     CONFIG_SHOW_COMMAND_NAME: {"destructive": False, "requires_root": False},
@@ -131,9 +136,56 @@ _DESCRIBE_OVERRIDES: dict[str, dict[str, Any]] = {
     "describe": {"destructive": False, "requires_root": False},
     "describe-schemas": {"destructive": False, "requires_root": False},
     "detect": {"destructive": False, "requires_root": False},
-    "full-capacity-test": {"destructive": True, "requires_root": True},
-    "image-flash": {"destructive": True, "requires_root": True},
-    "surface-scan": {"destructive": False, "requires_root": False},
+    "health": {"destructive": False, "requires_root": False},
+    "history": {"destructive": False, "requires_root": False},
+    "endurance": {
+        "destructive": False,
+        "requires_root": False,
+        "destructive_when": "never while the engine is unimplemented",
+    },
+    "quick-test": {
+        "destructive": True,
+        "requires_root": True,
+        "destructive_when": (
+            "always: f3probe writes probe patterns across the device, and an "
+            "interrupted run may not finish restoring them"
+        ),
+    },
+    "surface-scan": {
+        "destructive": True,
+        "requires_root": True,
+        "destructive_when": "--mode destructive; readonly performs no writes",
+    },
+    "filesystem-check": {
+        "destructive": True,
+        "requires_root": True,
+        "destructive_when": "--force, which turns off read-only mode",
+    },
+    "performance": {
+        "destructive": True,
+        "requires_root": True,
+        "destructive_when": "always: the fio jobs write to the device",
+    },
+    "workload-smallfiles": {
+        "destructive": True,
+        "requires_root": False,
+        "destructive_when": "always, though it writes files through the mounted filesystem",
+    },
+    "full-capacity-test": {
+        "destructive": True,
+        "requires_root": True,
+        "destructive_when": "always: the whole span is overwritten",
+    },
+    "image-flash": {
+        "destructive": True,
+        "requires_root": True,
+        "destructive_when": "always: dd overwrites the device",
+    },
+    "pipeline": {
+        "destructive": True,
+        "requires_root": True,
+        "destructive_when": "when the negotiated plan contains a writing stage",
+    },
 }
 
 
@@ -194,6 +246,7 @@ def _describe_click_command(full_name: str, command: click.Command) -> dict[str,
         "summary": (command.help or "").strip(),
         "destructive": False,
         "requires_root": False,
+        "destructive_when": None,
         "arguments": [],
         "options": [],
     }
