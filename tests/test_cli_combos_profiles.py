@@ -111,3 +111,34 @@ class CombosProfilesCLITest(unittest.TestCase):
         response = CLIResponse.model_validate_json(result.stdout)
         self.assertEqual(len(response.data.get("profiles", [])), 1)
         self.assertEqual(response.data["profiles"][0].get("name"), "camera-logger")
+
+    def test_profiles_human_output_flags_an_unreadable_profile(self) -> None:
+        # A malformed preset used to vanish from the listing entirely.
+        sample_profiles: list[dict[str, Any]] = [
+            {
+                "name": "broken",
+                "description": None,
+                "path": "/tmp/broken.toml",
+                "error": "Illegal character '\\n' (at line 2, column 106)",
+            },
+            {
+                "name": "fine",
+                "description": "desc",
+                "duration_seconds": 100.0,
+                "pass_count": 1,
+                "force": False,
+                "write_pattern": "sequential",
+                "path": "/tmp/fine.toml",
+                "error": None,
+            },
+        ]
+        with patch(
+            "tfqa.orchestration.profile.list_profiles", lambda config: sample_profiles
+        ):
+            result = self.runner.invoke(app, ["profiles"])
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("broken: UNREADABLE", result.stdout)
+        self.assertIn("/tmp/broken.toml", result.stdout)
+        self.assertIn("Illegal character", result.stdout)
+        # The good profile is still listed normally.
+        self.assertIn("fine: desc", result.stdout)

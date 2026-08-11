@@ -267,16 +267,13 @@ never touches real hardware.
 
 Honest list of what does not work yet. Contributions welcome.
 
-1. **`tfqa/data/profiles/router-telemetry.toml` is invalid TOML.** Its description is a basic string
-   spanning a newline; it needs `"""`. `list_profiles` swallows the parse error, so the profile
-   silently disappears while `combos` still references it.
-2. **Health data is fabricated.** `tfqa/ext/mmc.py:26` returns a hardcoded mock
+1. **Health data is fabricated.** `tfqa/ext/mmc.py:26` returns a hardcoded mock
    (`FlashCrucibleMock`, `life_used_percent=5`), and `tfqa/ext/sdmon.py:55` has a matching stub.
    Nothing marks the output as synthetic, and the pipeline records these values into history and
    trends as if they were measured.
-3. **`full-capacity-test` is a stub.** `tfqa/tests/capacity/full.py:21` returns canned numbers
+2. **`full-capacity-test` is a stub.** `tfqa/tests/capacity/full.py:21` returns canned numbers
    without touching the device.
-4. **Pydantic deprecation warnings.** `tfqa/core/models.py` still uses class-based `Config`;
+3. **Pydantic deprecation warnings.** `tfqa/core/models.py` still uses class-based `Config`;
    migrating to `ConfigDict` is pending.
 
 ## Documentation

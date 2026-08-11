@@ -18,6 +18,10 @@ except ModuleNotFoundError:
 
 toml: Any = toml_impl
 
+# tomllib and tomli both expose TOMLDecodeError, but under different module
+# names depending on which one is available.
+TOML_DECODE_ERROR: type[Exception] = toml_impl.TOMLDecodeError
+
 DEFAULT_PROFILES_DIR = paths.DEFAULT_PROFILES_DIR
 
 
@@ -107,10 +111,29 @@ def load_profile(name: str, config: ConfigModel) -> EnduranceProfile:
     except OSError as exc:
         raise ArgumentError(
             message=f"Unable to read profile '{name}': {exc}",
-            details={"profile": name},
+            details={"profile": name, "path": str(profile_path)},
+        )
+    except (TOML_DECODE_ERROR, UnicodeDecodeError) as exc:
+        # Without this a malformed file surfaced as INTERNAL_ERROR carrying a
+        # bare parser message ("Illegal character '\n' ...") and no clue which
+        # file was at fault. UnicodeDecodeError covers a .toml that is not
+        # valid UTF-8, which tomllib raises before it parses anything.
+        raise ArgumentError(
+            message=f"Profile '{name}' is not valid TOML: {exc}",
+            details={"profile": name, "path": str(profile_path), "error": str(exc)},
         )
 
-    return EnduranceProfile.from_dict(data)
+    try:
+        return EnduranceProfile.from_dict(data)
+    except ArgumentError:
+        raise
+    except (ValueError, TypeError) as exc:
+        # Valid TOML holding a value of the wrong type, e.g.
+        # `duration_seconds = "abc"`, which the float()/int() coercions reject.
+        raise ArgumentError(
+            message=f"Profile '{name}' has an invalid value: {exc}",
+            details={"profile": name, "path": str(profile_path), "error": str(exc)},
+        )
 
 
 def list_profiles(config: ConfigModel) -> list[dict[str, Any]]:
@@ -124,14 +147,28 @@ def list_profiles(config: ConfigModel) -> list[dict[str, Any]]:
     for profile_path in sorted(profiles_dir.glob("*.toml")):
         if not profile_path.is_file():
             continue
+        # A broken profile is reported, not skipped. Swallowing the error made
+        # a malformed file vanish from the listing while combos still referred
+        # to it, so it looked like the profile had never existed.
+        #
+        # The catch is deliberately broad. This is a per-file directory scan, so
+        # one unreadable preset must not take the listing down with it and hide
+        # every valid one — which is what a narrow tuple did for invalid UTF-8
+        # (UnicodeDecodeError) and wrong-typed values (ValueError/TypeError).
+        # Nothing is swallowed: whatever went wrong is recorded on the entry.
         try:
             with profile_path.open("rb") as fh:
                 raw = cast(dict[str, Any], toml.load(fh))
-        except Exception:
-            continue
-        try:
             profile = EnduranceProfile.from_dict(raw)
-        except ArgumentError:
+        except Exception as exc:
+            entries.append(
+                {
+                    "name": profile_path.stem,
+                    "description": None,
+                    "path": str(profile_path),
+                    "error": str(exc),
+                }
+            )
             continue
         entries.append(
             {
@@ -142,6 +179,7 @@ def list_profiles(config: ConfigModel) -> list[dict[str, Any]]:
                 "force": profile.force,
                 "write_pattern": profile.write_pattern,
                 "path": str(profile_path),
+                "error": None,
             }
         )
     return entries
