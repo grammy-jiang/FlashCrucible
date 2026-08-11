@@ -50,7 +50,7 @@ commands and read the same results.
 | `full-capacity-test` | Destructive full-span write + verify, detects wrapping fakes | **Yes** |
 | `surface-scan` | Bad-block sweep via `badblocks` (required) | Only `--mode destructive` |
 | `performance` | Throughput / latency / IOPS via `fio` (required) | **Yes** |
-| `endurance` | Burn-in loop — **not implemented**, refuses to run | — |
+| `endurance` | Burn-in: repeated write+verify passes, reports how the card degrades | **Yes** |
 | `workload-smallfiles` | Small-file create/read/delete metadata stress | **Yes** |
 | `image-flash` | Write an image with `dd`, verify with `cmp` | **Yes** |
 | `filesystem-check` | Run `fsck` against the filesystem | Only with `--force` |
@@ -188,6 +188,18 @@ uv run tfqa status 20260811T093157Z-3f9c1a20
 uv run tfqa status                    # every recent run
 uv run tfqa cancel 20260811T093157Z-3f9c1a20
 ```
+
+`endurance` takes the same flags, and needs them more: it rewrites the whole span once per pass.
+
+```bash
+uv run tfqa --yes endurance --device /dev/sdX --force --passes 20 --detach
+```
+
+`--passes` counts whole-span write+verify cycles and `--duration` is an overall deadline; the run
+stops at whichever comes first and records which. It stops early if the card starts refusing
+writes, or if a block comes back holding data written for a different offset — that is a wrapping
+counterfeit, not wear, and hammering it further learns nothing. An ordinary read mismatch is
+counted and the run continues, because the trend across passes is the measurement.
 
 The run records phase, byte progress, and its outcome to a state file beside its JSONL log, so
 `status` works from any process and a crashed run still leaves something readable. A run whose
@@ -337,11 +349,12 @@ in for block devices. `make test-hermetic` runs it again with every external bin
 
 Honest list of what is constrained. Contributions welcome.
 
-1. **`endurance` is not implemented.** It performed no device I/O and reported invented figures,
-   so it now refuses with `NOT_IMPLEMENTED` rather than lying. Use `quick-test` or
-   `full-capacity-test` for real measurements. Implementing it properly makes it a genuinely
-   long-running command, which needs
-   [#17](https://github.com/grammy-jiang/FlashCrucible/issues/17) first.
+1. **No card has a lifetime estimate.** `endurance` measures how a card degrades over repeated
+   rewrites — throughput per pass, mismatches per pass, where writes stopped being accepted — but
+   it will not turn that into "months remaining" or a health score. Wear counters come from eMMC
+   `EXT_CSD` or `sdmon`, and when neither answers the result says so with the reason rather than
+   estimating. An earlier version did estimate, and reported "58 TB written, 0 errors" against a
+   device path that did not exist.
 2. **Some commands need their tool present.** `performance` requires `fio` and `surface-scan`
    requires `badblocks`; without them they report the tool as missing instead of estimating.
    `surface-scan` reports the bad-block count badblocks actually found, and no latency figure,
