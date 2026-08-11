@@ -31,7 +31,7 @@ import struct
 import time
 from typing import Any, Callable, Literal, TypedDict, cast
 
-from tfqa.core.errors import RuntimeIOError
+from tfqa.core.errors import ArgumentError, RuntimeIOError
 from tfqa.core.models import DeviceInfo
 
 DEFAULT_BLOCK_SIZE = 1024 * 1024
@@ -66,10 +66,12 @@ def block_pattern(offset: int, size: int, seed: int) -> bytes:
     """
 
     if size < _HEADER.size:
-        raise RuntimeIOError(
-            f"Block size must be at least {_HEADER.size} bytes to carry the "
-            "offset header",
-            {"size": size, "minimum": _HEADER.size},
+        raise ArgumentError(
+            message=(
+                f"Block size must be at least {_HEADER.size} bytes to carry the "
+                "offset header"
+            ),
+            details={"size": size, "minimum": _HEADER.size},
         )
     header = _HEADER.pack(offset, seed)
     body = hashlib.blake2b(header, digest_size=_DIGEST_SIZE).digest()
@@ -229,6 +231,29 @@ def _verify_pass(
     return verified, mismatches, issues
 
 
+def validate_options(block_size: int, limit_bytes: int | None) -> None:
+    """Reject option values the engine cannot run.
+
+    Split out so the CLI can apply the same rules before emitting a dry-run
+    plan, and so a bad argument is reported as INVALID_ARGUMENT rather than
+    falling through to a device-shaped error about capacity.
+    """
+
+    if block_size < _HEADER.size:
+        raise ArgumentError(
+            message=(
+                f"Block size must be at least {_HEADER.size} bytes, the size of "
+                "the offset header each block carries"
+            ),
+            details={"block_size": block_size, "minimum": _HEADER.size},
+        )
+    if limit_bytes is not None and limit_bytes <= 0:
+        raise ArgumentError(
+            message="Limit must be a positive number of bytes",
+            details={"limit_bytes": limit_bytes},
+        )
+
+
 def _estimate_real_size(written: int, span: int, wrapped: bool) -> int | None:
     """Real capacity, but only when it can actually be justified.
 
@@ -259,11 +284,7 @@ def run_full_capacity(
 ) -> FullCapacityResult:
     """Write a pattern across the device and verify it reads back intact."""
 
-    if block_size < _HEADER.size:
-        raise RuntimeIOError(
-            f"Block size must be at least {_HEADER.size} bytes",
-            {"block_size": block_size, "minimum": _HEADER.size},
-        )
+    validate_options(block_size, limit_bytes)
 
     span = device.size_bytes
     if limit_bytes is not None:

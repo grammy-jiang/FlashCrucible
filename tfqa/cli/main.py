@@ -1632,6 +1632,9 @@ def full_capacity_test(
             if yes is not None
             else bool(ctx.obj.get("global", {}).get("yes", False))
         )
+        # Same rules the engine applies, before the dry-run branch, so a plan is
+        # never advertised for an invocation the real run would reject.
+        full_capacity.validate_options(block_size, limit_bytes)
 
         if _resolve_dry_run(ctx, dry_run):
             _emit_dry_run(

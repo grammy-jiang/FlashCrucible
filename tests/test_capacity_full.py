@@ -15,7 +15,7 @@ from unittest import TestCase
 
 import pytest
 
-from tfqa.core.errors import RuntimeIOError
+from tfqa.core.errors import ArgumentError, RuntimeIOError
 from tfqa.core.models import DeviceInfo
 from tfqa.tests.capacity import full
 
@@ -305,7 +305,7 @@ class Options(TempDirCase):
         target = make_target(self.root)
         for block_size in (0, 1, 8, 15):
             with self.subTest(block_size=block_size):
-                with pytest.raises(RuntimeIOError):
+                with pytest.raises(ArgumentError):
                     full.run_full_capacity(
                         make_device(target),
                         force=True,
@@ -313,11 +313,31 @@ class Options(TempDirCase):
                         block_size=block_size,
                     )
 
+    def test_non_positive_limit_is_an_argument_error(self):
+        # These used to fall through to "Device reports no capacity to test",
+        # which blamed the device for a bad flag and hid the actual value.
+        target = make_target(self.root)
+        for limit in (0, -1, -4096):
+            with self.subTest(limit=limit):
+                with pytest.raises(ArgumentError) as excinfo:
+                    full.run_full_capacity(
+                        make_device(target), force=True, yes=True, limit_bytes=limit
+                    )
+                self.assertEqual(excinfo.value.details["limit_bytes"], limit)
+
+    def test_zero_capacity_device_is_still_a_device_error(self):
+        # A device that reports no capacity is not an argument problem.
+        target = make_target(self.root, size_bytes=BLOCK)
+        with pytest.raises(RuntimeIOError):
+            full.run_full_capacity(
+                make_device(target, size_bytes=0), force=True, yes=True
+            )
+
     def test_block_pattern_never_exceeds_the_requested_size(self):
         for size in (16, 17, 31, 32, 4096):
             with self.subTest(size=size):
                 self.assertEqual(len(full.block_pattern(0, size, 0)), size)
-        with pytest.raises(RuntimeIOError):
+        with pytest.raises(ArgumentError):
             full.block_pattern(0, 15, 0)
 
     def test_fsync_failure_is_reported(self):
