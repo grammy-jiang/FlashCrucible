@@ -103,17 +103,25 @@ Replace `/dev/sdX` with a real path from step 1. There is no default device, by 
 
 ## Safety
 
-The intended model is: **never destructive by default, always explicit.**
+**Never destructive by default, always explicit.**
 
 - No command defaults to a device. You must pass `--device`.
-- Destructive operations are meant to require `--yes`, and `--force` to override a refusal.
-- `tfqa/core/safety.py` implements `assert_safe_for_destructive()`, which refuses a device that is
-  mounted or looks like a system disk.
+- Every command that writes raw blocks calls `assert_safe_for_destructive()` from
+  `tfqa/core/safety.py`, which refuses a device that is mounted or looks like a system disk.
+- Overriding a refusal takes **both** `--force` and `--yes`. `--force` on its own is treated as an
+  unconfirmed request, so a stray flag left in a script cannot arm a destructive run.
 
-**That guard is currently not connected to the commands that write.** It is called from only two
-places, and one of them passes `force=True, yes=True` hardcoded, which makes it a no-op. Commands
-including `quick-test`, `surface-scan`, `endurance`, and `image-flash` will happily operate on a
-mounted device or your system disk. See [Known limitations](#known-limitations).
+```bash
+uv run tfqa quick-test --device /dev/sdX                 # refused if /dev/sdX is mounted
+uv run tfqa --yes quick-test --device /dev/sdX --force   # explicit override
+```
+
+A refusal exits with code `3` and `error_code: DEVICE_UNSAFE`, and the payload names the reason
+(`mountpoints`, `is_system_disk`) so automation can act on it.
+
+Read-only paths stay usable on a mounted card: `surface-scan --mode readonly`, a `pipeline` whose
+stages are all non-writing, `detect`, `health`, and every reporting command. `workload-smallfiles`
+writes through a mounted filesystem, so it is intentionally exempt from the unmounted requirement.
 
 Also note: the global `--dry-run` flag is parsed but never read. Only the per-command `--dry-run`
 on `quick-test` and `workload-smallfiles` works, and it must come **after** the subcommand:
@@ -227,27 +235,23 @@ never touches real hardware.
 
 Honest list of what does not work yet. Contributions welcome.
 
-1. **The safety guard is not wired up.** `assert_safe_for_destructive()` is called from two places
-   only (`tfqa/cli/main.py:1117`, `:1377`); the first passes `force=True, yes=True` hardcoded so it
-   always permits. Nothing that writes to a device checks whether it is mounted or is the system
-   disk. `image-flash` runs `dd` with no such check at all.
-2. **The global `--dry-run` is ignored.** Parsed at `main.py:372`, stored at `:195`, read nowhere.
+1. **The global `--dry-run` is ignored.** Parsed at `main.py:372`, stored at `:195`, read nowhere.
    Only `quick-test` and `workload-smallfiles` have a working per-command `--dry-run`.
-3. **Default data directories resolve to a path that does not exist.**
+2. **Default data directories resolve to a path that does not exist.**
    `tfqa/orchestration/profile.py:20` and `workflows.py:18` point at `tfqa/data/`, but the files
    live in the repo-root `data/`. Out of the box `profiles` finds nothing, `combos` errors, and
    `pipeline` fails on `Profile 'default' not found`. Work around it with
    `--profiles-dir data/profiles` and `TFQA_WORKFLOWS_DIR=data/workflows`.
-4. **`data/profiles/router-telemetry.toml` is invalid TOML.** Its description is a basic string
+3. **`data/profiles/router-telemetry.toml` is invalid TOML.** Its description is a basic string
    spanning a newline; it needs `"""`. `list_profiles` swallows the parse error, so the profile
    silently disappears while `combos` still references it.
-5. **Health data is fabricated.** `tfqa/ext/mmc.py:26` returns a hardcoded mock
+4. **Health data is fabricated.** `tfqa/ext/mmc.py:26` returns a hardcoded mock
    (`FlashCrucibleMock`, `life_used_percent=5`), and `tfqa/ext/sdmon.py:55` has a matching stub.
    Nothing marks the output as synthetic, and the pipeline records these values into history and
    trends as if they were measured.
-6. **`full-capacity-test` is a stub.** `tfqa/tests/capacity/full.py:21` returns canned numbers
+5. **`full-capacity-test` is a stub.** `tfqa/tests/capacity/full.py:21` returns canned numbers
    without touching the device.
-7. **Pydantic deprecation warnings.** `tfqa/core/models.py` still uses class-based `Config`;
+6. **Pydantic deprecation warnings.** `tfqa/core/models.py` still uses class-based `Config`;
    migrating to `ConfigDict` is pending.
 
 ## Documentation

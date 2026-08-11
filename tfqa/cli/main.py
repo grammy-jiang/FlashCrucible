@@ -29,6 +29,7 @@ from tfqa.core.errors import ArgumentError, TFQAError, get_exit_code
 from tfqa.core.models import (
     CLIResponse,
     ConfigModel,
+    DeviceInfo,
     EnduranceConfig,
     RunContext,
     TestResult,
@@ -58,6 +59,7 @@ DEVICE_PATH_HELP = "Block device path (e.g., /dev/sdb)."
 OUTPUT_HELP = "Output format (human/json)."
 DETECT_OUTPUT_HELP = OUTPUT_HELP
 DRY_RUN_FLAG = "--dry-run"
+FORCE_HELP = "Override the mounted/system-disk safety refusal (requires --yes)."
 METRICS_LABEL = "Metrics"
 DEFAULT_IMAGE_CONV_FLAGS: tuple[str, ...] = ("fsync",)
 DEFAULT_IMAGE_BLOCK_SIZE = "4M"
@@ -210,6 +212,18 @@ def _resolve_output(ctx: typer.Context, explicit: str | None) -> str:
     if explicit:
         return explicit
     return ctx.obj.get("global", {}).get("output", "human")
+
+
+def _assert_device_safe(ctx: typer.Context, device: DeviceInfo, force: bool) -> None:
+    """Refuse to write to a mounted device or a system disk.
+
+    Every command that writes raw blocks must call this before touching the
+    device. Overriding requires both `--force` and `--yes`, so a stray `--force`
+    left in a script cannot on its own arm a destructive run.
+    """
+
+    confirmed = bool(ctx.obj.get("global", {}).get("yes", False))
+    safety_mod.assert_safe_for_destructive(device, force=force, yes=confirmed)
 
 
 def _coerce_positive_int(value: Any, default: int) -> int:
@@ -729,6 +743,7 @@ def quick_test(
         "--f3-timeout",
         help="Seconds to wait for `f3probe` to complete (default 120).",
     ),
+    force: bool = typer.Option(False, "--force", help=FORCE_HELP),
     output: str | None = typer.Option(None, "--output", "-o", help=OUTPUT_HELP),
 ) -> None:
     """Run a quick capacity/authenticity check on the provided device."""
@@ -759,6 +774,10 @@ def quick_test(
             print(resp.message)
             print(f"Plan: {plan}")
             return
+
+        # f3probe writes probe patterns across the device, so this is a
+        # destructive operation even though it restores the blocks afterwards.
+        _assert_device_safe(ctx, target_device, force)
 
         probe_command = quick_capacity.describe_probe_command(target_device)
         progress_event: Event | None = None
@@ -923,6 +942,7 @@ def performance(
         "--random-read-percentage",
         help="Read percentage for random rw mix (0-100).",
     ),
+    force: bool = typer.Option(False, "--force", help=FORCE_HELP),
     output: str | None = typer.Option(None, "--output", "-o", help=OUTPUT_HELP),
 ) -> None:
     """Run a synthetic sequential performance benchmark."""
@@ -932,6 +952,7 @@ def performance(
         actual_output = _resolve_output(ctx, output)
         _config = _ensure_config(ctx)
         target_device = devices_mod.get_device(device)
+        _assert_device_safe(ctx, target_device, force)
         normalized_mode = mode.lower()
 
         if normalized_mode == "random":
@@ -1050,6 +1071,10 @@ def surface_scan(
             )
         if normalized_mode == "destructive" and not force:
             raise ArgumentError("Destructive scans require --force to opt in.")
+        if normalized_mode == "destructive":
+            # A read-only sweep never writes, so only the destructive mode has
+            # to clear the mounted/system-disk checks.
+            _assert_device_safe(ctx, target_device, force)
 
         run_id = _generate_run_id()
         scan_result = surface_scan_mod.run_surface_scan(
@@ -1138,13 +1163,17 @@ def filesystem_check(
         _config = _ensure_config(ctx)
         target_device = devices_mod.get_device(device)
         run_id = _generate_run_id()
-        destructive_mode = force and not read_only
-        if destructive_mode:
-            safety_mod.assert_safe_for_destructive(target_device, force=True, yes=True)
+        # `--force` turns read-only mode off regardless of --read-only, so the
+        # guard has to key off the effective value. Keying it off the raw flag
+        # let `--force` alone (with the default --read-only) run a repair-capable
+        # fsck on a mounted device without any safety check.
+        effective_read_only = read_only and not force
+        if not effective_read_only:
+            _assert_device_safe(ctx, target_device, force)
 
         fsck_result = run_fsck(
             target_device.path,
-            read_only=read_only and not force,
+            read_only=effective_read_only,
             force=force,
             timeout_seconds=timeout,
         )
@@ -1270,6 +1299,7 @@ def image_flash(
         "--verify-timeout",
         help="Timeout in seconds for the verify phase.",
     ),
+    force: bool = typer.Option(False, "--force", help=FORCE_HELP),
     output: str | None = typer.Option(None, "--output", "-o", help=OUTPUT_HELP),
 ) -> None:
     """Flash an image onto the selected device and optionally verify it."""
@@ -1279,6 +1309,9 @@ def image_flash(
         actual_output = _resolve_output(ctx, output)
         _config = _ensure_config(ctx)
         target_device = devices_mod.get_device(device)
+        # dd overwrites the whole device; never let this reach a mounted
+        # filesystem or the system disk without an explicit override.
+        _assert_device_safe(ctx, target_device, force)
         run_id = _generate_run_id()
         conv_opts = _parse_conv_flags(conv_flags)
 
@@ -1664,6 +1697,9 @@ def endurance(
         if force is not None:
             overrides["force"] = force
         engine_config = base_config.with_overrides(**overrides)
+        # The effective force flag can come from the profile, so evaluate
+        # safety against the merged config rather than the raw CLI option.
+        _assert_device_safe(ctx, target_device, bool(engine_config.force))
 
         run_ctx = RunContext(
             run_id=run_id,
@@ -2281,6 +2317,7 @@ def pipeline(  # noqa: C901
         "--image-verify-timeout",
         help="Timeout in seconds for the verification step.",
     ),
+    force: bool = typer.Option(False, "--force", help=FORCE_HELP),
     output: str | None = typer.Option(None, "--output", "-o", help=OUTPUT_HELP),
 ) -> None:
     """Run the default orchestration pipeline (detect → quick test → endurance)."""
@@ -2358,6 +2395,14 @@ def pipeline(  # noqa: C901
             stages = pipeline_mod.build_default_pipeline(profile_settings)
 
         negotiated_stage_plan = [stage.name for stage in stages]
+        # Guard once for the whole plan: a read-only plan (detect/health/summary)
+        # stays usable on a mounted card, anything that writes does not. The
+        # profile can supply force just as it does for the standalone endurance
+        # command, so honour both sources; --yes is still required either way.
+        if pipeline_mod.plan_is_destructive(negotiated_stage_plan):
+            _assert_device_safe(
+                ctx, target_device, force or bool(profile_settings.force)
+            )
         results = pipeline_mod.run_pipeline(run_ctx, stages)
         aggregated_status = _aggregate_pipeline_status(results)
         stage_payloads = [result.model_dump() for result in results]
