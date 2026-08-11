@@ -29,16 +29,19 @@ identical format and a second copy would drift.
 
 from __future__ import annotations
 
-import os
 import time
-from typing import Any, Callable, Literal, TypedDict, cast
+from typing import Any, Literal, TypedDict
 
 from tfqa.core.blockio import (
     HEADER,
     FlushOutcome,
+    Mismatch,
+    ProgressFn,
     block_pattern,
     decode_offset,
     flush_and_drop_cache,
+    verify_pass,
+    write_pass,
 )
 from tfqa.core.errors import ArgumentError, RuntimeIOError
 from tfqa.core.models import DeviceInfo
@@ -48,27 +51,18 @@ from tfqa.core.models import DeviceInfo
 #: needs the identical header format.
 __all__ = [
     "HEADER",
+    "Mismatch",
     "block_pattern",
     "decode_offset",
     "FlushOutcome",
     "flush_and_drop_cache",
     "run_full_capacity",
     "validate_options",
+    "verify_pass",
+    "write_pass",
 ]
 
 DEFAULT_BLOCK_SIZE = 1024 * 1024
-
-#: (bytes done in this pass, bytes in a pass, pass name). The pass name lets a
-#: caller account for write and verify separately; reporting both as one span
-#: showed 100% when writing finished and then dropped back to nearly zero.
-ProgressFn = Callable[[int, int, str], None]
-
-
-class Mismatch(TypedDict, total=False):
-    offset: int
-    expected_offset: int
-    found_offset: int
-    reason: str
 
 
 class FullCapacityResult(TypedDict):
@@ -82,131 +76,6 @@ class FullCapacityResult(TypedDict):
     #: wrong. Warnings never fail the run; issues do.
     warnings: list[str]
     details: dict[str, object]
-
-
-def _write_pass(
-    path: str,
-    span: int,
-    block_size: int,
-    seed: int,
-    progress: ProgressFn | None,
-) -> tuple[int, list[str], list[str]]:
-    """Fill `span` bytes with the pattern.
-
-    Returns (bytes written, issues, warnings). Warnings do not fail the run;
-    they record something that weakens the evidence rather than something the
-    device got wrong.
-    """
-
-    issues: list[str] = []
-    warnings: list[str] = []
-    written = 0
-    fd = os.open(path, os.O_WRONLY)
-    try:
-        while written < span:
-            size = min(block_size, span - written)
-            if size < HEADER.size:
-                # A tail too small to carry the offset header cannot be
-                # verified; stop rather than write something uncheckable.
-                break
-            try:
-                chunk = block_pattern(written, size, seed)
-                os.write(fd, chunk)
-            except OSError as exc:
-                # A fake card typically starts refusing writes at its real size.
-                issues.append(
-                    f"write failed at offset {written} after "
-                    f"{written} bytes: {exc.strerror or exc}"
-                )
-                break
-            written += size
-            if progress:
-                progress(written, span, "write")
-        flushed = flush_and_drop_cache(fd)
-        if flushed.sync_error:
-            issues.append(
-                f"{flushed.sync_error} after {written} bytes; the device did "
-                "not commit the data it accepted"
-            )
-        if flushed.cache_error and not flushed.sync_error:
-            # Only when the write is believed to have committed. If fsync
-            # failed the run has already failed for a stronger reason, and
-            # doubting the evidence for data that never arrived is noise.
-            #
-            # A warning rather than an issue: the write itself may be sound.
-            # What is in doubt is the verify pass, which could be answered from
-            # RAM -- and a wrapping counterfeit passes cleanly when that
-            # happens.
-            warnings.append(
-                f"{flushed.cache_error}; the verify pass may have been served "
-                "from the page cache, so a device that silently wraps its "
-                "writes could still appear to pass"
-            )
-    finally:
-        os.close(fd)
-    return written, issues, warnings
-
-
-def _verify_pass(
-    path: str,
-    span: int,
-    block_size: int,
-    seed: int,
-    max_mismatches: int,
-    progress: ProgressFn | None,
-) -> tuple[int, list[Mismatch], list[str]]:
-    """Read the span back and compare. Returns (verified, mismatches, issues)."""
-
-    issues: list[str] = []
-    mismatches: list[Mismatch] = []
-    verified = 0
-    fd = os.open(path, os.O_RDONLY)
-    try:
-        offset = 0
-        while offset < span:
-            size = min(block_size, span - offset)
-            if size < HEADER.size:
-                break
-            try:
-                actual = os.read(fd, size)
-            except OSError as exc:
-                issues.append(f"read failed at offset {offset}: {exc.strerror or exc}")
-                break
-            if len(actual) < size:
-                issues.append(
-                    f"short read at offset {offset}: got {len(actual)} of {size} bytes"
-                )
-                break
-            if actual != block_pattern(offset, size, seed):
-                if len(mismatches) < max_mismatches:
-                    found = decode_offset(actual, span)
-                    # A plausible integer in the header is not enough: a bad
-                    # sector returning zeros decodes as offset 0. Only call it a
-                    # wrap when the whole block is exactly what was written for
-                    # that other offset, otherwise it is ordinary corruption.
-                    is_wrap = (
-                        found is not None
-                        and found != offset
-                        and actual == block_pattern(found, size, seed)
-                    )
-                    entry = Mismatch(offset=offset, expected_offset=offset)
-                    if is_wrap:
-                        entry["found_offset"] = cast(int, found)
-                        entry["reason"] = (
-                            "block holds data written for a different offset, "
-                            "which is how a wrapping counterfeit behaves"
-                        )
-                    else:
-                        entry["reason"] = "block contents differ from the pattern"
-                    mismatches.append(entry)
-            else:
-                verified += size
-            offset += size
-            if progress:
-                progress(offset, span, "verify")
-    finally:
-        os.close(fd)
-    return verified, mismatches, issues
 
 
 def validate_options(block_size: int, limit_bytes: int | None) -> None:
@@ -274,11 +143,11 @@ def run_full_capacity(
         )
 
     started = time.monotonic()
-    written, write_issues, warnings = _write_pass(
-        device.path, span, block_size, seed, progress
+    written, write_issues, warnings = write_pass(
+        device.path, span, block_size, seed, progress=progress
     )
-    verified, mismatches, read_issues = _verify_pass(
-        device.path, written, block_size, seed, max_mismatches, progress
+    verified, mismatches, _count, _wrapped, read_issues = verify_pass(
+        device.path, written, block_size, seed, max_mismatches, progress=progress
     )
     duration = time.monotonic() - started
 

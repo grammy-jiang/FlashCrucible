@@ -199,8 +199,8 @@ class CounterfeitDevice(TempDirCase):
             handle.seek(BLOCK)
             handle.write(full.block_pattern(0, BLOCK, 0))
 
-        verified, mismatches, _ = full._verify_pass(
-            str(target), SPAN, BLOCK, 0, 16, None
+        verified, mismatches, _count, _wrapped, _issues = full.verify_pass(
+            str(target), SPAN, BLOCK, 0, 16
         )
 
         self.assertEqual(len(mismatches), 1)
@@ -218,8 +218,8 @@ class CounterfeitDevice(TempDirCase):
             handle.seek(BLOCK)
             handle.write(b"\xff" * BLOCK)
 
-        _verified, mismatches, _ = full._verify_pass(
-            str(target), SPAN, BLOCK, 0, 16, None
+        _verified, mismatches, _count, _wrapped, _issues = full.verify_pass(
+            str(target), SPAN, BLOCK, 0, 16
         )
 
         # 0xFF bytes decode to 2**64-1, which is not a plausible offset, so it
@@ -242,8 +242,8 @@ class CounterfeitDevice(TempDirCase):
             handle.seek(BLOCK)
             handle.write(b"\x00" * BLOCK)
 
-        _verified, mismatches, _ = full._verify_pass(
-            str(target), SPAN, BLOCK, 0, 16, None
+        _verified, mismatches, _count, _wrapped, _issues = full.verify_pass(
+            str(target), SPAN, BLOCK, 0, 16
         )
 
         self.assertEqual(len(mismatches), 1)
@@ -364,8 +364,8 @@ class Options(TempDirCase):
     def test_max_mismatches_caps_the_report(self):
         target = make_target(self.root)
         # Nothing was written, so every block mismatches.
-        _verified, mismatches, _ = full._verify_pass(
-            str(target), SPAN, BLOCK, 0, 2, None
+        _verified, mismatches, _count, _wrapped, _issues = full.verify_pass(
+            str(target), SPAN, BLOCK, 0, 2
         )
 
         self.assertEqual(len(mismatches), 2)

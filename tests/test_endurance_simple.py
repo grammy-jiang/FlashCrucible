@@ -23,6 +23,7 @@ from unittest.mock import patch
 import pytest
 
 from tfqa.core.errors import ArgumentError
+from tfqa.core import blockio
 from tfqa.core.models import DeviceInfo, EnduranceConfig, RunContext, TestResult
 from tfqa.tests.endurance import simple
 from tfqa.tests.endurance.simple import run_simple_endurance
@@ -300,7 +301,9 @@ class TestStopping:
         device = _make_device(str(image), SPAN)
         with (
             patch.object(simple, "run_health_snapshot", return_value=NO_WEAR),
-            patch.object(simple, "_verify_pass", return_value=(0, 1, True, ["wrap"])),
+            patch.object(
+                simple, "verify_pass", return_value=(0, [], 1, True, ["wrap"])
+            ),
         ):
             result = run_simple_endurance(
                 _make_context(device, tmp_path),
@@ -318,7 +321,9 @@ class TestStopping:
         device = _make_device(str(image))
         with (
             patch.object(simple, "run_health_snapshot", return_value=NO_WEAR),
-            patch.object(simple, "_verify_pass", return_value=(0, 3, False, ["bad"])),
+            patch.object(
+                simple, "verify_pass", return_value=(0, [], 3, False, ["bad"])
+            ),
         ):
             result = run_simple_endurance(
                 _make_context(device, tmp_path),
@@ -335,16 +340,16 @@ class TestWritePatterns:
     not happen -- and random and sequential stress a card differently."""
 
     def test_random_visits_every_block_exactly_once(self) -> None:
-        offsets = simple._block_offsets(SPAN, BLOCK, "random", 7)
+        offsets = blockio.block_offsets(SPAN, BLOCK, "random", 7)
         assert sorted(offsets) == list(range(0, SPAN, BLOCK))
 
     def test_random_is_not_sequential(self) -> None:
-        assert simple._block_offsets(SPAN, BLOCK, "random", 7) != list(
+        assert blockio.block_offsets(SPAN, BLOCK, "random", 7) != list(
             range(0, SPAN, BLOCK)
         )
 
     def test_random_is_reproducible_from_the_seed(self) -> None:
-        assert simple._block_offsets(SPAN, BLOCK, "random", 7) == simple._block_offsets(
+        assert blockio.block_offsets(SPAN, BLOCK, "random", 7) == blockio.block_offsets(
             SPAN, BLOCK, "random", 7
         )
 

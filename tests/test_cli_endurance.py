@@ -164,6 +164,59 @@ class EnduranceCLITest(TestCase):
 
         self.assertNotIn("simulation", invocation.stdout.lower())
 
+    def test_the_write_pattern_is_selectable_from_the_command_line(self) -> None:
+        # It was implemented but reachable only by editing a profile TOML.
+        device = _make_device("/dev/sdz")
+        captured: dict[str, EnduranceConfig] = {}
+
+        def fake_run(ctx: Any, config: EnduranceConfig, progress: Any = None):
+            captured["config"] = config
+            return _build_result("ok", errors=0)
+
+        with (
+            patch("tfqa.core.devices.get_device", return_value=device),
+            patch("tfqa.tests.endurance.simple.run_simple_endurance", fake_run),
+        ):
+            self.runner.invoke(
+                app,
+                [
+                    "endurance",
+                    "--device",
+                    device.path,
+                    "--write-pattern",
+                    "random",
+                    "--max-mismatches",
+                    "3",
+                    "--force",
+                    "--yes",
+                ],
+            )
+
+        self.assertEqual(captured["config"].write_pattern, "random")
+        self.assertEqual(captured["config"].max_mismatches, 3)
+
+    def test_an_unsupported_pattern_is_refused_by_the_command(self) -> None:
+        device = _make_device("/dev/sdz")
+        with patch("tfqa.core.devices.get_device", return_value=device):
+            invocation = self.runner.invoke(
+                app,
+                [
+                    "endurance",
+                    "--device",
+                    device.path,
+                    "--write-pattern",
+                    "zigzag",
+                    "--output",
+                    "json",
+                ],
+            )
+
+        self.assertNotEqual(invocation.exit_code, 0)
+        self.assertEqual(
+            CLIResponse.model_validate_json(invocation.stdout).error_code,
+            "INVALID_ARGUMENT",
+        )
+
     def test_endurance_cli_overrides_pass_config(self) -> None:
         device = _make_device("/dev/sdy", removable=False)
         profile_obj = EnduranceProfile(

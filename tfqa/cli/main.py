@@ -2289,6 +2289,22 @@ def endurance(
     seed: int = typer.Option(
         0, "--seed", help="Base for the per-pass pattern; fixed for reproducibility."
     ),
+    write_pattern: str | None = typer.Option(
+        None,
+        "--write-pattern",
+        help=(
+            "Order blocks are written in: sequential or random (profiles can "
+            "set it). Random is performed, not just recorded."
+        ),
+    ),
+    max_mismatches: int | None = typer.Option(
+        None,
+        "--max-mismatches",
+        help=(
+            "How many mismatching blocks to describe per pass (profiles can "
+            "set it). The count is never capped, only the detail."
+        ),
+    ),
     detach: bool = typer.Option(False, "--detach", help=DETACH_HELP),
     dry_run: bool = typer.Option(
         False, DRY_RUN_FLAG, help="Show the endurance plan without running it."
@@ -2315,6 +2331,7 @@ def endurance(
             pass_count=profile_settings.pass_count,
             force=profile_settings.force,
             write_pattern=profile_settings.write_pattern,
+            max_mismatches=profile_settings.max_mismatches,
         )
         overrides: dict[str, Any] = {}
         if duration is not None:
@@ -2326,6 +2343,10 @@ def endurance(
         overrides["block_size"] = block_size
         overrides["limit_bytes"] = limit_bytes
         overrides["seed"] = seed
+        if max_mismatches is not None:
+            overrides["max_mismatches"] = max_mismatches
+        if write_pattern is not None:
+            overrides["write_pattern"] = write_pattern
         engine_config = base_config.with_overrides(**overrides)
         # The effective force flag can come from the profile, so evaluate
         # safety against the merged config rather than the raw CLI option.
@@ -2358,6 +2379,7 @@ def endurance(
                     "pass_count": engine_config.pass_count,
                     "write_pattern": engine_config.write_pattern,
                     "force": effective_force,
+                    "max_mismatches": engine_config.max_mismatches,
                     "block_size": engine_config.block_size,
                     "limit_bytes": engine_config.limit_bytes,
                     "span_bytes": span,

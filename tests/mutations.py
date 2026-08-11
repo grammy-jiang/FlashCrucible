@@ -86,9 +86,11 @@ MUTANTS: dict[str, Mutant] = {
         ),
     ),
     "wrap-detection-blinded": Mutant(
-        target="tfqa.tests.capacity.full.decode_offset",
+        target="tfqa.core.blockio.decode_offset",
         # A wrapping counterfeit is only distinguishable from ordinary
-        # corruption by the offset the block claims to hold.
+        # corruption by the offset the block claims to hold. Patched in
+        # `blockio`, which is where the verify pass -- and the wrap test --
+        # now lives for every engine.
         replacement=lambda block, span=None: None,
         # The node id, not the file: with `-x` a file-level selection stops at
         # the unit test of the helper, which proves less than the behaviour.

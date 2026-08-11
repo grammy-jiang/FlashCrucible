@@ -46,32 +46,25 @@ grow across passes is the measurement.
 
 from __future__ import annotations
 
-import os
 import time
 from datetime import datetime, timezone
-from typing import Any, Callable, TypedDict, cast
+from typing import Any, TypedDict, cast, get_args
 
-import random as random_mod
-
-from tfqa.core.blockio import HEADER, block_pattern, decode_offset, flush_and_drop_cache
+from tfqa.core.blockio import (
+    HEADER,
+    ProgressFn,
+    verify_pass,
+    write_pass,
+)
 from tfqa.core.errors import ArgumentError
+from tfqa.core.blockio import WriteOrder
 from tfqa.core.models import EnduranceConfig, RunContext, TestResult, TestStatus
 from tfqa.tests.health.snapshot import HealthSnapshot, run_health_snapshot
 
-#: (bytes done in this pass, bytes in a pass, phase). Phases are named
-#: "write"/"verify" so a caller can account for the two halves separately.
-ProgressFn = Callable[[int, int, str], None]
-
-DEFAULT_BLOCK_SIZE = 1024 * 1024
-
-#: Beyond a handful, more mismatches from one pass say nothing new; the count
-#: still rises so the trend survives.
-DEFAULT_MAX_MISMATCHES = 8
-
-#: Write orders the engine can actually perform. A pattern it merely echoes
-#: back would let a profile claim a random-write workload ran when the writes
-#: were sequential, and the two stress a card differently.
-WRITE_PATTERNS = frozenset({"sequential", "random"})
+#: Write orders the engine can actually perform, derived from the `WriteOrder`
+#: the shared pass accepts rather than listed again -- a second list is how a
+#: profile ends up claiming a random-write workload that ran sequentially.
+WRITE_PATTERNS = frozenset(get_args(WriteOrder))
 
 #: Wear fields worth reporting a delta for. Anything absent from the card's
 #: registers is simply absent from the result.
@@ -169,131 +162,6 @@ def _pass_seed(base_seed: int, index: int) -> int:
     return base_seed + index * 0x9E3779B1
 
 
-def _block_offsets(span: int, block_size: int, pattern: str, seed: int) -> list[int]:
-    """The offsets a pass visits, in the order it visits them.
-
-    Random order is a real difference to a flash controller, and because every
-    block's content is derived from its own offset, order does not affect what
-    verification expects. The shuffle is seeded so a run stays reproducible.
-    """
-
-    offsets = list(range(0, span, block_size))
-    if pattern == "random":
-        random_mod.Random(seed).shuffle(offsets)
-    return offsets
-
-
-def _write_pass(
-    path: str,
-    span: int,
-    block_size: int,
-    seed: int,
-    pattern: str,
-    phase: str,
-    progress: ProgressFn | None,
-) -> tuple[int, list[str], list[str]]:
-    """Fill `span` bytes. Returns (bytes written, issues, warnings)."""
-
-    issues: list[str] = []
-    warnings: list[str] = []
-    written = 0
-    fd = os.open(path, os.O_WRONLY)
-    try:
-        for offset in _block_offsets(span, block_size, pattern, seed):
-            size = min(block_size, span - offset)
-            try:
-                os.lseek(fd, offset, os.SEEK_SET)
-                os.write(fd, block_pattern(offset, size, seed))
-            except OSError as exc:
-                issues.append(f"write failed at offset {offset}: {exc.strerror or exc}")
-                break
-            written += size
-            if progress:
-                progress(written, span, phase)
-        flushed = flush_and_drop_cache(fd)
-        if flushed.sync_error:
-            issues.append(
-                f"{flushed.sync_error} after {written} bytes; the device did "
-                "not commit the data it accepted"
-            )
-        elif flushed.cache_error:
-            warnings.append(
-                f"{flushed.cache_error}; the verify pass may have been served "
-                "from the page cache, so a device that silently wraps its "
-                "writes could still appear to pass"
-            )
-    finally:
-        os.close(fd)
-    return written, issues, warnings
-
-
-def _verify_pass(
-    path: str,
-    span: int,
-    block_size: int,
-    seed: int,
-    max_mismatches: int,
-    phase: str,
-    progress: ProgressFn | None,
-) -> tuple[int, int, bool, list[str]]:
-    """Read `span` back and compare.
-
-    Returns (bytes verified, mismatch count, wrapped, issues). The mismatch
-    count keeps rising past `max_mismatches`; only the recorded detail stops,
-    because the count across passes is the measurement.
-    """
-
-    issues: list[str] = []
-    mismatches = 0
-    wrapped = False
-    verified = 0
-    fd = os.open(path, os.O_RDONLY)
-    try:
-        offset = 0
-        while offset < span:
-            size = min(block_size, span - offset)
-            if size < HEADER.size:
-                break
-            try:
-                actual = os.read(fd, size)
-            except OSError as exc:
-                issues.append(f"read failed at offset {offset}: {exc.strerror or exc}")
-                break
-            if len(actual) < size:
-                issues.append(
-                    f"short read at offset {offset}: got {len(actual)} of {size} bytes"
-                )
-                break
-            if actual == block_pattern(offset, size, seed):
-                verified += size
-            else:
-                mismatches += 1
-                found = decode_offset(actual, span)
-                # A plausible integer in the header is not enough: a bad sector
-                # returning zeros decodes as offset 0. Only a block that is
-                # exactly what was written for another offset is a wrap.
-                if (
-                    found is not None
-                    and found != offset
-                    and actual == block_pattern(found, size, seed)
-                ):
-                    wrapped = True
-                    if mismatches <= max_mismatches:
-                        issues.append(
-                            f"block at offset {offset} holds data written for "
-                            f"offset {found}, which is how a wrapping "
-                            "counterfeit behaves"
-                        )
-                elif mismatches <= max_mismatches:
-                    issues.append(f"block at offset {offset} differs from the pattern")
-            offset += size
-            if progress:
-                progress(offset, span, phase)
-    finally:
-        os.close(fd)
-    return verified, mismatches, wrapped, issues
-
-
 def _wear_delta(before: HealthSnapshot, after: HealthSnapshot) -> dict[str, object]:
     """What the card's own counters say changed, if it says anything.
 
@@ -382,25 +250,31 @@ def run_simple_endurance(  # noqa: C901 - the loop is the algorithm
         # The phase carries the pass index: the recorder keys progress by
         # phase, so reusing "write"/"verify" made each pass overwrite the last
         # and the total could never exceed one pass's worth.
-        written, write_issues, write_warnings = _write_pass(
+        written, write_issues, write_warnings = write_pass(
             device.path,
             span,
             config.block_size,
             seed,
-            config.write_pattern,
-            f"pass{index}-write",
-            progress,
+            order=cast(WriteOrder, config.write_pattern),
+            phase=f"pass{index}-write",
+            progress=progress,
         )
         write_finished = time.monotonic()
-        verified, mismatches, pass_wrapped, read_issues = _verify_pass(
+        verified, described, mismatches, pass_wrapped, read_issues = verify_pass(
             device.path,
             written,
             config.block_size,
             seed,
             config.max_mismatches,
-            f"pass{index}-verify",
-            progress,
+            phase=f"pass{index}-verify",
+            progress=progress,
         )
+        # The shared pass describes a capped sample; the strings are built here
+        # so the wording stays with the engine that reports them.
+        read_issues = read_issues + [
+            f"block at offset {entry['offset']}: {entry['reason']}"
+            for entry in described
+        ]
         finished = time.monotonic()
 
         warnings.extend(write_warnings)

@@ -21,10 +21,21 @@ from __future__ import annotations
 
 import hashlib
 import os
+import random as random_mod
 import struct
-from typing import NamedTuple
+from typing import Callable, Literal, NamedTuple, TypedDict, cast
 
 from tfqa.core.errors import ArgumentError
+
+#: (bytes done in this pass, bytes in a pass, phase name). The phase lets a
+#: caller account for write and verify separately, and for each pass of a
+#: multi-pass run separately again.
+ProgressFn = Callable[[int, int, str], None]
+
+#: Orders a pass can visit blocks in. Random order is a real difference to a
+#: flash controller; because a block's content derives from its own offset, it
+#: changes nothing about what verification expects.
+WriteOrder = Literal["sequential", "random"]
 
 #: offset, seed. Every block carries both, so a mismatch can say where the data
 #: that came back actually belongs.
@@ -121,3 +132,187 @@ def flush_and_drop_cache(fd: int) -> FlushOutcome:
             sync_error, f"could not drop the page cache: {exc.strerror or exc}"
         )
     return FlushOutcome(sync_error, None)
+
+
+class Mismatch(TypedDict, total=False):
+    """One block that did not read back as it was written."""
+
+    offset: int
+    expected_offset: int
+    found_offset: int
+    reason: str
+
+
+class WriteOutcome(NamedTuple):
+    written: int
+    issues: list[str]
+    warnings: list[str]
+
+
+class VerifyOutcome(NamedTuple):
+    verified: int
+    #: Described mismatches, capped. The cap is on the *detail*, not the count.
+    mismatches: list[Mismatch]
+    #: Every mismatch, including those past the cap. An endurance run needs the
+    #: true count per pass, because the trend is the measurement.
+    mismatch_count: int
+    wrapped: bool
+    issues: list[str]
+
+
+def block_offsets(
+    span: int,
+    block_size: int,
+    order: WriteOrder = "sequential",
+    seed: int = 0,
+) -> list[int]:
+    """The offsets a pass visits, in the order it visits them.
+
+    A final chunk too small to carry the offset header is dropped: it could not
+    be verified, so writing it would put data on the device that nothing can
+    check.
+
+    Random order is shuffled from `seed`, so a run stays reproducible.
+    """
+
+    offsets = [
+        offset
+        for offset in range(0, span, block_size)
+        if min(block_size, span - offset) >= HEADER.size
+    ]
+    if order == "random":
+        random_mod.Random(seed).shuffle(offsets)
+    return offsets
+
+
+def write_pass(
+    path: str,
+    span: int,
+    block_size: int,
+    seed: int,
+    *,
+    order: WriteOrder = "sequential",
+    phase: str = "write",
+    progress: ProgressFn | None = None,
+) -> WriteOutcome:
+    """Write the pattern across `span`, and commit it.
+
+    Shared by every engine that writes raw blocks. The alternative -- a copy per
+    engine -- means the format one writes can drift from the format another
+    verifies, and a verify pass that silently stops verifying is the failure
+    mode with no symptom.
+    """
+
+    issues: list[str] = []
+    warnings: list[str] = []
+    written = 0
+    fd = os.open(path, os.O_WRONLY)
+    try:
+        for offset in block_offsets(span, block_size, order, seed):
+            size = min(block_size, span - offset)
+            try:
+                os.lseek(fd, offset, os.SEEK_SET)
+                os.write(fd, block_pattern(offset, size, seed))
+            except OSError as exc:
+                # A fake card typically starts refusing writes at its real size.
+                issues.append(
+                    f"write failed at offset {offset} after {written} bytes: "
+                    f"{exc.strerror or exc}"
+                )
+                break
+            written += size
+            if progress:
+                progress(written, span, phase)
+
+        flushed = flush_and_drop_cache(fd)
+        if flushed.sync_error:
+            issues.append(
+                f"{flushed.sync_error} after {written} bytes; the device did "
+                "not commit the data it accepted"
+            )
+        elif flushed.cache_error:
+            # Only when the write is believed to have committed. If fsync
+            # failed the run has already failed for a stronger reason, and
+            # doubting the evidence for data that never arrived is noise.
+            warnings.append(
+                f"{flushed.cache_error}; the verify pass may have been served "
+                "from the page cache, so a device that silently wraps its "
+                "writes could still appear to pass"
+            )
+    finally:
+        os.close(fd)
+    return WriteOutcome(written, issues, warnings)
+
+
+def verify_pass(
+    path: str,
+    span: int,
+    block_size: int,
+    seed: int,
+    max_mismatches: int,
+    *,
+    phase: str = "verify",
+    progress: ProgressFn | None = None,
+) -> VerifyOutcome:
+    """Read `span` back and compare it against what was written.
+
+    The wrap test lives here and nowhere else. It is deliberately strict: a bad
+    sector returning zeros decodes as offset 0, so a header that merely holds a
+    plausible integer is not evidence. Only a block that is byte-for-byte what
+    was written for the offset it claims counts as a wrap.
+    """
+
+    issues: list[str] = []
+    mismatches: list[Mismatch] = []
+    mismatch_count = 0
+    wrapped = False
+    verified = 0
+
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        offset = 0
+        while offset < span:
+            size = min(block_size, span - offset)
+            if size < HEADER.size:
+                break
+            try:
+                actual = os.read(fd, size)
+            except OSError as exc:
+                issues.append(f"read failed at offset {offset}: {exc.strerror or exc}")
+                break
+            if len(actual) < size:
+                issues.append(
+                    f"short read at offset {offset}: got {len(actual)} of {size} bytes"
+                )
+                break
+
+            if actual == block_pattern(offset, size, seed):
+                verified += size
+            else:
+                mismatch_count += 1
+                found = decode_offset(actual, span)
+                is_wrap = (
+                    found is not None
+                    and found != offset
+                    and actual == block_pattern(found, size, seed)
+                )
+                wrapped = wrapped or is_wrap
+                # The cap limits how much is described, never what is counted.
+                if len(mismatches) < max_mismatches:
+                    entry = Mismatch(offset=offset, expected_offset=offset)
+                    if is_wrap:
+                        entry["found_offset"] = cast(int, found)
+                        entry["reason"] = (
+                            "block holds data written for a different offset, "
+                            "which is how a wrapping counterfeit behaves"
+                        )
+                    else:
+                        entry["reason"] = "block contents differ from the pattern"
+                    mismatches.append(entry)
+
+            offset += size
+            if progress:
+                progress(offset, span, phase)
+    finally:
+        os.close(fd)
+    return VerifyOutcome(verified, mismatches, mismatch_count, wrapped, issues)
