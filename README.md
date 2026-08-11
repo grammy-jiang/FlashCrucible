@@ -13,9 +13,8 @@ uv run tfqa quick-test --device /dev/sdX --dry-run
 ```
 
 > **Status: early development.** The CLI surface, JSON schemas, safety guardrails, and test
-> harness are real and working. Several test engines are still stubs, and the health readings are
-> synthetic. Read [Safety](#safety) and [Known limitations](#known-limitations) before pointing
-> this at a card you care about.
+> harness are real and working. `full-capacity-test` is still a stub. Read [Safety](#safety) and
+> [Known limitations](#known-limitations) before pointing this at a card you care about.
 
 ---
 
@@ -46,7 +45,7 @@ commands and read the same results.
 | `workload-smallfiles` | Small-file create/read/delete metadata stress | **Yes** |
 | `image-flash` | Write an image with `dd`, verify with `cmp` | **Yes** |
 | `filesystem-check` | Run `fsck` against the filesystem | Only with `--force` |
-| `health` | Read CID / health registers (MMC, `sdmon`) | No (stub) |
+| `health` | Read CID / wear registers (sysfs, `mmc extcsd`, `sdmon`) | No |
 | `pipeline` | Run several stages as one orchestrated run | **Yes** |
 | `combos`, `profiles` | List curated workflows and endurance presets | No |
 | `describe`, `describe-schemas` | Machine-readable command and schema discovery | No |
@@ -267,14 +266,13 @@ never touches real hardware.
 
 Honest list of what does not work yet. Contributions welcome.
 
-1. **Health data is fabricated.** `tfqa/ext/mmc.py:26` returns a hardcoded mock
-   (`FlashCrucibleMock`, `life_used_percent=5`), and `tfqa/ext/sdmon.py:55` has a matching stub.
-   Nothing marks the output as synthetic, and the pipeline records these values into history and
-   trends as if they were measured.
-2. **`full-capacity-test` is a stub.** `tfqa/tests/capacity/full.py:21` returns canned numbers
+1. **`full-capacity-test` is a stub.** `tfqa/tests/capacity/full.py:21` returns canned numbers
    without touching the device.
-3. **Pydantic deprecation warnings.** `tfqa/core/models.py` still uses class-based `Config`;
+2. **Pydantic deprecation warnings.** `tfqa/core/models.py` still uses class-based `Config`;
    migrating to `ConfigDict` is pending.
+3. **Health data needs the right hardware.** Wear data comes from eMMC `EXT_CSD` registers
+   (usually root) or from `sdmon` on industrial SD cards. A consumer card in a USB reader can
+   supply neither, so `tfqa health` reports what is unavailable and why rather than guessing.
 
 ## Documentation
 

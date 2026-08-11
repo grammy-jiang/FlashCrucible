@@ -210,10 +210,38 @@ health snapshot (MMC + `sdmon`) inside the response.
 `performance` prefers `fio` (sequential or random) to report throughput, latency, and IOPS, and
 falls back to a synthetic benchmark when `fio` is missing.
 
-Every stage in `tfqa pipeline` records the latest health snapshot (`life_used_percent`,
-`power_on_count`, and so on) in its JSONL event and CLI response, so automation can correlate
-throughput and capacity results with device health trends. Note that health values are currently
-synthetic — see README *Known limitations* #5.
+Every stage in `tfqa pipeline` records the latest health snapshot in its JSONL event and CLI
+response, so automation can correlate throughput and capacity results with device health trends.
+
+### What the health snapshot contains
+
+Every value comes from the device. The snapshot reports which sources answered and why the others
+did not, and never fills a gap with a plausible number:
+
+| Key | Meaning |
+| --- | --- |
+| `available` | `false` when no source produced wear data; `health` is then `{}` |
+| `source` | `+`-joined list of the sources that contributed, or `none` |
+| `cid` | Identity; `is_card_identity` is `false` when the values come from the block device (a reader or enclosure) rather than the card's CID register |
+| `health` | Wear metrics — `life_used_percent`, `pre_eol_state`, `power_on_count`, … |
+| `sources` | Per-source `available` / `error_code` / `reason` |
+
+Three real sources:
+
+- **sysfs** (`/sys/block/<name>/device/…`) — a card on an MMC host controller exposes the actual
+  CID register; a USB reader exposes only reader identity, reported with `is_card_identity: false`.
+- **`mmc extcsd read`** — eMMC `EXT_CSD` wear registers. `EXT_CSD_DEVICE_LIFE_TIME_EST_TYP_A/B`
+  report 10% bands, so `life_used_percent` is the band's upper bound rather than a false precision;
+  `EXT_CSD_PRE_EOL_INFO` becomes `pre_eol_state` (`normal` / `warning` / `urgent`). `0x00` means
+  "not defined" in all three registers, and a card that answers with zeros counts as having
+  supplied no estimate. Usually needs root, and is eMMC-only.
+- **`sdmon`** — vendor CMD56 registers on industrial SD cards, parsed from its JSON output. The
+  unmapped fields are kept under `details.sdmon_raw`. Note `spare_block_count` is remaining
+  reserve, not a failure count — it is deliberately separate from `read_error_count`.
+
+A consumer card in a USB reader can supply none of the wear sources, so `tfqa health` will report
+`available: false` and name each reason. That is the honest answer; it previously printed invented
+numbers that changed on every run.
 
 ## Profiles and endurance metadata
 
