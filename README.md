@@ -3,7 +3,7 @@
 [![CI](https://github.com/grammy-jiang/FlashCrucible/actions/workflows/ci.yml/badge.svg)](https://github.com/grammy-jiang/FlashCrucible/actions/workflows/ci.yml)
 [![Format](https://github.com/grammy-jiang/FlashCrucible/actions/workflows/format.yml/badge.svg)](https://github.com/grammy-jiang/FlashCrucible/actions/workflows/format.yml)
 [![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/grammy-jiang/FlashCrucible/blob/master/LICENSE)
 [![Linting: ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![Checked with mypy](https://img.shields.io/badge/mypy-checked-2a6db2.svg)](https://mypy-lang.org/)
 [![Platform: Linux](https://img.shields.io/badge/platform-linux-lightgrey.svg)](#platform-support)
@@ -267,8 +267,8 @@ uv run mypy tfqa/ tests/         # type check
 uv run tfqa validate-schemas     # check the JSON schemas parse
 ```
 
-CI runs all of these on every push and pull request. See [CONTRIBUTING.md](CONTRIBUTING.md), and
-[AGENTS.md](AGENTS.md) if you are an AI agent working in this repository.
+CI runs all of these on every push and pull request. See [CONTRIBUTING.md](https://github.com/grammy-jiang/FlashCrucible/blob/master/CONTRIBUTING.md), and
+[AGENTS.md](https://github.com/grammy-jiang/FlashCrucible/blob/master/AGENTS.md) if you are an AI agent working in this repository.
 
 The suite never touches real hardware. CLI tests use Typer's `CliRunner` with
 `unittest.mock.patch` to stub device access, and the engine tests write to temporary files
@@ -293,16 +293,16 @@ Honest list of what is constrained. Contributions welcome.
 
 | Document | What it covers |
 | --- | --- |
-| [docs/cli-guide.md](docs/cli-guide.md) | Detailed notes on individual commands, payloads, and automation hooks |
-| [docs/tool-wrapping-strategy.md](docs/tool-wrapping-strategy.md) | Which external tools are wrapped, and what must be built natively |
-| [docs/design-v0-structure.md](docs/design-v0-structure.md) | Module and package architecture |
-| [docs/design-v0-details.md](docs/design-v0-details.md) | Detailed design notes |
-| [docs/features-roadmap-v0.md](docs/features-roadmap-v0.md) | Feature priorities and phase plan |
-| [docs/sd-tools-study-v0.md](docs/sd-tools-study-v0.md) | Survey of existing microSD test tools |
-| [docs/ux-v0.md](docs/ux-v0.md) | CLI UX requirements |
-| [docs/phase3-4-plan.md](docs/phase3-4-plan.md) | Endurance, orchestration, and automation work plan |
-| [docs/agent-readiness.md](docs/agent-readiness.md) | What works today for AI agents, and what is missing |
-| [AGENTS.md](AGENTS.md) | Working agreement for AI agents contributing to this repository |
+| [docs/cli-guide.md](https://github.com/grammy-jiang/FlashCrucible/blob/master/docs/cli-guide.md) | Detailed notes on individual commands, payloads, and automation hooks |
+| [docs/tool-wrapping-strategy.md](https://github.com/grammy-jiang/FlashCrucible/blob/master/docs/tool-wrapping-strategy.md) | Which external tools are wrapped, and what must be built natively |
+| [docs/design-v0-structure.md](https://github.com/grammy-jiang/FlashCrucible/blob/master/docs/design-v0-structure.md) | Module and package architecture |
+| [docs/design-v0-details.md](https://github.com/grammy-jiang/FlashCrucible/blob/master/docs/design-v0-details.md) | Detailed design notes |
+| [docs/features-roadmap-v0.md](https://github.com/grammy-jiang/FlashCrucible/blob/master/docs/features-roadmap-v0.md) | Feature priorities and phase plan |
+| [docs/sd-tools-study-v0.md](https://github.com/grammy-jiang/FlashCrucible/blob/master/docs/sd-tools-study-v0.md) | Survey of existing microSD test tools |
+| [docs/ux-v0.md](https://github.com/grammy-jiang/FlashCrucible/blob/master/docs/ux-v0.md) | CLI UX requirements |
+| [docs/phase3-4-plan.md](https://github.com/grammy-jiang/FlashCrucible/blob/master/docs/phase3-4-plan.md) | Endurance, orchestration, and automation work plan |
+| [docs/agent-readiness.md](https://github.com/grammy-jiang/FlashCrucible/blob/master/docs/agent-readiness.md) | What works today for AI agents, and what is missing |
+| [AGENTS.md](https://github.com/grammy-jiang/FlashCrucible/blob/master/AGENTS.md) | Working agreement for AI agents contributing to this repository |
 
 ## Platform support
 
@@ -314,4 +314,4 @@ sysfs, wear registers through the MMC ioctl interface, and drops the page cache 
 
 ## License
 
-[MIT](LICENSE) © Grammy Jiang
+[MIT](https://github.com/grammy-jiang/FlashCrucible/blob/master/LICENSE) © Grammy Jiang
