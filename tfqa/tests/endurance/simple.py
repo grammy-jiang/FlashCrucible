@@ -51,6 +51,8 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Callable, TypedDict, cast
 
+import random as random_mod
+
 from tfqa.core.blockio import HEADER, block_pattern, decode_offset, flush_and_drop_cache
 from tfqa.core.errors import ArgumentError
 from tfqa.core.models import EnduranceConfig, RunContext, TestResult, TestStatus
@@ -65,6 +67,11 @@ DEFAULT_BLOCK_SIZE = 1024 * 1024
 #: Beyond a handful, more mismatches from one pass say nothing new; the count
 #: still rises so the trend survives.
 DEFAULT_MAX_MISMATCHES = 8
+
+#: Write orders the engine can actually perform. A pattern it merely echoes
+#: back would let a profile claim a random-write workload ran when the writes
+#: were sequential, and the two stress a card differently.
+WRITE_PATTERNS = frozenset({"sequential", "random"})
 
 #: Wear fields worth reporting a delta for. Anything absent from the card's
 #: registers is simply absent from the result.
@@ -129,6 +136,19 @@ def validate_config(config: EnduranceConfig) -> None:
             details={"limit_bytes": config.limit_bytes},
         )
 
+    if config.write_pattern not in WRITE_PATTERNS:
+        raise ArgumentError(
+            message=(
+                f"Unsupported write pattern {config.write_pattern!r}; the "
+                "engine would otherwise report having run a workload it did "
+                "not"
+            ),
+            details={
+                "write_pattern": config.write_pattern,
+                "supported": sorted(WRITE_PATTERNS),
+            },
+        )
+
 
 def _throughput_mbps(byte_count: int, seconds: float) -> float:
     """Measured, not estimated: zero elapsed time means no measurement."""
@@ -149,11 +169,27 @@ def _pass_seed(base_seed: int, index: int) -> int:
     return base_seed + index * 0x9E3779B1
 
 
+def _block_offsets(span: int, block_size: int, pattern: str, seed: int) -> list[int]:
+    """The offsets a pass visits, in the order it visits them.
+
+    Random order is a real difference to a flash controller, and because every
+    block's content is derived from its own offset, order does not affect what
+    verification expects. The shuffle is seeded so a run stays reproducible.
+    """
+
+    offsets = list(range(0, span, block_size))
+    if pattern == "random":
+        random_mod.Random(seed).shuffle(offsets)
+    return offsets
+
+
 def _write_pass(
     path: str,
     span: int,
     block_size: int,
     seed: int,
+    pattern: str,
+    phase: str,
     progress: ProgressFn | None,
 ) -> tuple[int, list[str], list[str]]:
     """Fill `span` bytes. Returns (bytes written, issues, warnings)."""
@@ -163,20 +199,17 @@ def _write_pass(
     written = 0
     fd = os.open(path, os.O_WRONLY)
     try:
-        while written < span:
-            size = min(block_size, span - written)
-            if size < HEADER.size:
-                break
+        for offset in _block_offsets(span, block_size, pattern, seed):
+            size = min(block_size, span - offset)
             try:
-                os.write(fd, block_pattern(written, size, seed))
+                os.lseek(fd, offset, os.SEEK_SET)
+                os.write(fd, block_pattern(offset, size, seed))
             except OSError as exc:
-                issues.append(
-                    f"write failed at offset {written}: {exc.strerror or exc}"
-                )
+                issues.append(f"write failed at offset {offset}: {exc.strerror or exc}")
                 break
             written += size
             if progress:
-                progress(written, span, "write")
+                progress(written, span, phase)
         flushed = flush_and_drop_cache(fd)
         if flushed.sync_error:
             issues.append(
@@ -200,6 +233,7 @@ def _verify_pass(
     block_size: int,
     seed: int,
     max_mismatches: int,
+    phase: str,
     progress: ProgressFn | None,
 ) -> tuple[int, int, bool, list[str]]:
     """Read `span` back and compare.
@@ -254,7 +288,7 @@ def _verify_pass(
                     issues.append(f"block at offset {offset} differs from the pattern")
             offset += size
             if progress:
-                progress(offset, span, "verify")
+                progress(offset, span, phase)
     finally:
         os.close(fd)
     return verified, mismatches, wrapped, issues
@@ -274,6 +308,21 @@ def _wear_delta(before: HealthSnapshot, after: HealthSnapshot) -> dict[str, obje
             "reason": (
                 "no wear source answered; eMMC EXT_CSD registers usually need "
                 "root, and sdmon only supports some industrial SD cards"
+            ),
+            "sources": after.get("sources", {}),
+        }
+
+    if before.get("source") != after.get("source"):
+        # The snapshot merges mmc and sdmon, and they disagree by design --
+        # sdmon reads a vendor register, EXT_CSD reports a 10% band. Subtracting
+        # one from the other manufactures a delta out of a tool becoming
+        # available or going away.
+        return {
+            "available": False,
+            "reason": (
+                "the wear source changed during the run "
+                f"({before.get('source')} -> {after.get('source')}), so any "
+                "delta would be an artefact of that rather than of the writes"
             ),
             "sources": after.get("sources", {}),
         }
@@ -300,6 +349,12 @@ def run_simple_endurance(  # noqa: C901 - the loop is the algorithm
     span = device.size_bytes
     if config.limit_bytes is not None:
         span = min(span, config.limit_bytes)
+    # A tail too small to carry the offset header cannot be verified, and the
+    # passes would skip it while the result still reported the full span as
+    # tested. Drop it up front so `span` is what was actually covered.
+    remainder = span % config.block_size
+    if 0 < remainder < HEADER.size:
+        span -= remainder
     if span < HEADER.size:
         raise ArgumentError(
             message="Device reports too little capacity to test",
@@ -324,8 +379,17 @@ def run_simple_endurance(  # noqa: C901 - the loop is the algorithm
         seed = _pass_seed(config.seed, index)
         pass_started = time.monotonic()
 
+        # The phase carries the pass index: the recorder keys progress by
+        # phase, so reusing "write"/"verify" made each pass overwrite the last
+        # and the total could never exceed one pass's worth.
         written, write_issues, write_warnings = _write_pass(
-            device.path, span, config.block_size, seed, progress
+            device.path,
+            span,
+            config.block_size,
+            seed,
+            config.write_pattern,
+            f"pass{index}-write",
+            progress,
         )
         write_finished = time.monotonic()
         verified, mismatches, pass_wrapped, read_issues = _verify_pass(
@@ -334,6 +398,7 @@ def run_simple_endurance(  # noqa: C901 - the loop is the algorithm
             config.block_size,
             seed,
             config.max_mismatches,
+            f"pass{index}-verify",
             progress,
         )
         finished = time.monotonic()

@@ -560,7 +560,9 @@ def _progress_recorder(
         status.phase = phase
         status.completed_bytes = sum(seen.values())
         status.total_bytes = total * passes
-        if phase == "write" and done > 0:
+        # Endurance names its phases `pass0-write`, so match on the suffix
+        # rather than the whole string; a read-only pass must never set this.
+        if phase.endswith("write") and done > 0:
             status.wrote_to_device = True
         now = time.time()
         if now - last[0] >= 1.0 or status.completed_bytes >= status.total_bytes:

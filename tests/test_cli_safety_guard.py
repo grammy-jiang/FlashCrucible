@@ -477,6 +477,9 @@ class PlanIsDestructive(TestCase):
             "full-capacity-test",
             "performance",
             "image-flash",
+            # Every endurance pass overwrites the span. It was read-only here
+            # only while the engine refused to do any device I/O.
+            "endurance",
         ):
             with self.subTest(stage=stage):
                 self.assertTrue(plan_is_destructive(["detect", stage]))
@@ -485,8 +488,7 @@ class PlanIsDestructive(TestCase):
         # The pipeline runs surface-scan in readonly mode and fsck with
         # read_only=True, so neither writes. Only the standalone commands can,
         # and those guard themselves.
-        # `endurance` joins these while it performs no device I/O.
-        for stage in ("surface-scan", "filesystem-check", "endurance"):
+        for stage in ("surface-scan", "filesystem-check"):
             with self.subTest(stage=stage):
                 self.assertFalse(plan_is_destructive(["detect", stage]))
 

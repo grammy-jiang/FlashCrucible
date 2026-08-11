@@ -165,6 +165,73 @@ class TestItMeasuresRatherThanEstimates:
         assert fields["life_used_percent"] == {"before": 10, "after": 12, "delta": 2}
 
 
+class TestWearProvenance:
+    """A delta between two different sources is an artefact, not a measurement."""
+
+    def test_a_source_change_makes_the_delta_unavailable(self, tmp_path: Path) -> None:
+        # sdmon reads a vendor register; EXT_CSD reports a 10% band. Subtracting
+        # one from the other manufactures wear out of a tool appearing or
+        # disappearing mid-run.
+        before = {
+            **NO_WEAR,
+            "available": True,
+            "source": "mmc-utils",
+            "health": {"life_used_percent": 20},
+        }
+        after = {
+            **NO_WEAR,
+            "available": True,
+            "source": "sdmon",
+            "health": {"life_used_percent": 30},
+        }
+        image = _target(tmp_path)
+        device = _make_device(str(image))
+        with patch.object(simple, "run_health_snapshot", side_effect=[before, after]):
+            result = run_simple_endurance(
+                _make_context(device, tmp_path),
+                EnduranceConfig(duration_seconds=60.0, pass_count=1, block_size=BLOCK),
+            )
+
+        wear = result.details["wear"]
+        assert wear["available"] is False
+        assert "source changed" in wear["reason"]
+        # The fictitious +10 must not appear anywhere.
+        assert "fields" not in wear
+
+
+class TestSpanIsWhatWasTested:
+    def test_a_tail_too_small_to_verify_is_excluded(self, tmp_path: Path) -> None:
+        # A remainder shorter than the offset header cannot be verified, so the
+        # passes skipped it while the result still counted it as tested.
+        odd = BLOCK * 3 + 4
+        image = tmp_path / "odd.img"
+        image.write_bytes(b"\0" * odd)
+        device = _make_device(str(image), odd)
+        with patch.object(simple, "run_health_snapshot", return_value=NO_WEAR):
+            result = run_simple_endurance(
+                _make_context(device, tmp_path),
+                EnduranceConfig(duration_seconds=60.0, pass_count=1, block_size=BLOCK),
+            )
+
+        assert result.metrics["span_bytes"] == BLOCK * 3
+        assert result.metrics["bytes_written"] == BLOCK * 3
+        assert result.metrics["bytes_verified"] == BLOCK * 3
+
+    def test_a_verifiable_tail_is_kept(self, tmp_path: Path) -> None:
+        odd = BLOCK * 3 + 64
+        image = tmp_path / "odd2.img"
+        image.write_bytes(b"\0" * odd)
+        device = _make_device(str(image), odd)
+        with patch.object(simple, "run_health_snapshot", return_value=NO_WEAR):
+            result = run_simple_endurance(
+                _make_context(device, tmp_path),
+                EnduranceConfig(duration_seconds=60.0, pass_count=1, block_size=BLOCK),
+            )
+
+        assert result.metrics["span_bytes"] == odd
+        assert result.metrics["bytes_written"] == odd
+
+
 class TestStopping:
     def test_the_pass_count_is_a_limit(self, tmp_path: Path) -> None:
         result = _run(tmp_path, pass_count=3)
@@ -263,6 +330,52 @@ class TestStopping:
         assert result.status == "failed"
 
 
+class TestWritePatterns:
+    """A pattern the engine only echoes back is a claim about a run that did
+    not happen -- and random and sequential stress a card differently."""
+
+    def test_random_visits_every_block_exactly_once(self) -> None:
+        offsets = simple._block_offsets(SPAN, BLOCK, "random", 7)
+        assert sorted(offsets) == list(range(0, SPAN, BLOCK))
+
+    def test_random_is_not_sequential(self) -> None:
+        assert simple._block_offsets(SPAN, BLOCK, "random", 7) != list(
+            range(0, SPAN, BLOCK)
+        )
+
+    def test_random_is_reproducible_from_the_seed(self) -> None:
+        assert simple._block_offsets(SPAN, BLOCK, "random", 7) == simple._block_offsets(
+            SPAN, BLOCK, "random", 7
+        )
+
+    def test_a_random_pass_still_verifies(self, tmp_path: Path) -> None:
+        # Order does not change what verification expects, because a block's
+        # content is derived from its own offset.
+        result = _run(tmp_path, write_pattern="random")
+        assert result.status == "ok"
+        assert result.metrics["bytes_verified"] == SPAN * 2
+
+    def test_an_unsupported_pattern_is_refused(self, tmp_path: Path) -> None:
+        device = _make_device(str(_target(tmp_path)))
+        with pytest.raises(ArgumentError) as excinfo:
+            run_simple_endurance(
+                _make_context(device, tmp_path),
+                EnduranceConfig(write_pattern="zigzag"),
+            )
+        assert "zigzag" in str(excinfo.value.details)
+
+    def test_every_shipped_profile_names_a_pattern_the_engine_runs(self) -> None:
+        # `router-telemetry` asks for "random"; before this the engine wrote
+        # sequentially and reported "random" anyway.
+        from tfqa.core.models import ConfigModel
+        from tfqa.orchestration import profile as profile_mod
+
+        for entry in profile_mod.list_profiles(ConfigModel()):
+            if entry.get("error"):
+                continue
+            assert entry["write_pattern"] in simple.WRITE_PATTERNS, entry["name"]
+
+
 class TestValidation:
     def test_inputs_are_checked_before_anything_is_written(
         self, tmp_path: Path
@@ -303,5 +416,27 @@ class TestProgress:
                 progress=lambda done, total, phase: seen.append((done, total, phase)),
             )
 
-        assert {phase for _d, _t, phase in seen} == {"write", "verify"}
+        # Each pass names its own phases. Reusing "write"/"verify" made the
+        # recorder key every pass to the same slot, so progress fell back at
+        # the start of each pass and could never exceed 1/pass_count.
+        assert {phase for _d, _t, phase in seen} == {
+            "pass0-write",
+            "pass0-verify",
+            "pass1-write",
+            "pass1-verify",
+        }
         assert len(seen) == 2 * 2 * (SPAN // BLOCK)
+
+    def test_progress_reaches_the_end_across_every_pass(self, tmp_path: Path) -> None:
+        # The bug this pins: two passes finished at 50%.
+        from tfqa.cli.main import _progress_recorder
+        from tfqa.core import runstate
+
+        status = runstate.RunStatus(run_id="r", command="endurance")
+        record = _progress_recorder(status, tmp_path, passes=2 * 2)
+        for index in range(2):
+            record(SPAN, SPAN, f"pass{index}-write")
+            record(SPAN, SPAN, f"pass{index}-verify")
+
+        assert status.percent == 100.0
+        assert status.wrote_to_device
