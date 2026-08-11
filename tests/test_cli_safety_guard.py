@@ -225,9 +225,7 @@ class EnduranceGuard(SafetyGuardTestCase):
 
 
 class FilesystemCheckGuard(SafetyGuardTestCase):
-    def test_repair_mode_refuses_mounted_device(self):
-        # This call site used to pass force=True, yes=True hardcoded, which
-        # made the guard permit everything.
+    def _invoke(self, *extra: str):
         with (
             patch("tfqa.core.devices.get_device", return_value=MOUNTED),
             patch("tfqa.cli.main.run_fsck") as run_fsck_mock,
@@ -238,14 +236,47 @@ class FilesystemCheckGuard(SafetyGuardTestCase):
                     "filesystem-check",
                     "--device",
                     MOUNTED.path,
-                    "--force",
-                    "--no-read-only",
+                    *extra,
                     "--output",
                     "json",
                 ],
             )
+        return result, run_fsck_mock
+
+    def test_repair_mode_refuses_mounted_device(self):
+        # This call site used to pass force=True, yes=True hardcoded, which
+        # made the guard permit everything.
+        result, run_fsck_mock = self._invoke("--force", "--no-read-only")
         self.assert_refused(result)
         run_fsck_mock.assert_not_called()
+
+    def test_force_with_default_read_only_refuses_mounted_device(self):
+        # `--force` turns read-only off inside run_fsck, so guarding on the raw
+        # --read-only flag let this exact invocation run a repair-capable fsck
+        # on a mounted device unchecked.
+        result, run_fsck_mock = self._invoke("--force")
+        self.assert_refused(result)
+        run_fsck_mock.assert_not_called()
+
+    def test_read_only_check_allowed_on_mounted_device(self):
+        with (
+            patch("tfqa.core.devices.get_device", return_value=MOUNTED),
+            patch("tfqa.cli.main.run_fsck") as run_fsck_mock,
+        ):
+            run_fsck_mock.return_value.status = "ok"
+            run_fsck_mock.return_value.returncode = 0
+            run_fsck_mock.return_value.clean = True
+            run_fsck_mock.return_value.errors_fixed = False
+            run_fsck_mock.return_value.needs_reboot = False
+            run_fsck_mock.return_value.duration_seconds = 1.0
+            run_fsck_mock.return_value.model_dump.return_value = {}
+            result = self.runner.invoke(
+                app,
+                ["filesystem-check", "--device", MOUNTED.path, "--output", "json"],
+            )
+        self.assertEqual(result.exit_code, 0)
+        run_fsck_mock.assert_called_once()
+        self.assertTrue(run_fsck_mock.call_args.kwargs["read_only"])
 
 
 class SurfaceScanGuard(SafetyGuardTestCase):
@@ -318,6 +349,80 @@ class PipelineGuard(SafetyGuardTestCase):
         self.assertEqual(result.exit_code, 0)
         run_pipeline.assert_called_once()
 
+    def test_surface_scan_plan_allowed_on_mounted_device(self):
+        # The pipeline surface stage is readonly; refusing it here would break
+        # the documented "read-only plans stay usable" behaviour.
+        with (
+            patch("tfqa.core.devices.get_device", return_value=MOUNTED),
+            patch("tfqa.orchestration.profile.load_profile", return_value=PROFILE),
+            patch(
+                "tfqa.orchestration.pipeline.run_pipeline", return_value=[]
+            ) as run_pipeline,
+        ):
+            result = self.runner.invoke(
+                app,
+                [
+                    "pipeline",
+                    "--device",
+                    MOUNTED.path,
+                    "--stages",
+                    "detect,surface-scan,filesystem-check",
+                    "--output",
+                    "json",
+                ],
+            )
+        self.assertEqual(result.exit_code, 0)
+        run_pipeline.assert_called_once()
+
+    def test_profile_force_is_honoured_as_override_source(self):
+        # `endurance` lets the profile supply force; the pipeline must agree.
+        # --yes is still required, so the profile alone cannot arm anything.
+        forced_profile = EnduranceProfile(
+            name="lab-heavy",
+            description="Forced profile",
+            duration_seconds=1.0,
+            pass_count=1,
+            force=True,
+            write_pattern="sequential",
+        )
+        with (
+            patch("tfqa.core.devices.get_device", return_value=MOUNTED),
+            patch(
+                "tfqa.orchestration.profile.load_profile", return_value=forced_profile
+            ),
+            patch(
+                "tfqa.orchestration.pipeline.run_pipeline", return_value=[]
+            ) as run_pipeline,
+        ):
+            refused = self.runner.invoke(
+                app,
+                [
+                    "pipeline",
+                    "--device",
+                    MOUNTED.path,
+                    "--stages",
+                    "detect,endurance",
+                    "--output",
+                    "json",
+                ],
+            )
+            allowed = self.runner.invoke(
+                app,
+                [
+                    "--yes",
+                    "pipeline",
+                    "--device",
+                    MOUNTED.path,
+                    "--stages",
+                    "detect,endurance",
+                    "--output",
+                    "json",
+                ],
+            )
+        self.assertEqual(refused.exit_code, 3)
+        self.assertEqual(allowed.exit_code, 0)
+        run_pipeline.assert_called_once()
+
     def test_destructive_plan_refused_on_mounted_device(self):
         with (
             patch("tfqa.core.devices.get_device", return_value=MOUNTED),
@@ -348,13 +453,20 @@ class PlanIsDestructive(TestCase):
         for stage in (
             "quick-test",
             "full-capacity-test",
-            "surface-scan",
             "performance",
             "endurance",
             "image-flash",
         ):
             with self.subTest(stage=stage):
                 self.assertTrue(plan_is_destructive(["detect", stage]))
+
+    def test_pipeline_only_stages_are_read_only(self):
+        # The pipeline runs surface-scan in readonly mode and fsck with
+        # read_only=True, so neither writes. Only the standalone commands can,
+        # and those guard themselves.
+        for stage in ("surface-scan", "filesystem-check"):
+            with self.subTest(stage=stage):
+                self.assertFalse(plan_is_destructive(["detect", stage]))
 
     def test_accepts_prefixed_names(self):
         self.assertTrue(plan_is_destructive(["pipeline.quick-test"]))

@@ -1163,15 +1163,17 @@ def filesystem_check(
         _config = _ensure_config(ctx)
         target_device = devices_mod.get_device(device)
         run_id = _generate_run_id()
-        destructive_mode = force and not read_only
-        if destructive_mode:
-            # Previously called with force=True, yes=True hardcoded, which made
-            # the guard unconditionally permissive. Pass the real flags instead.
+        # `--force` turns read-only mode off regardless of --read-only, so the
+        # guard has to key off the effective value. Keying it off the raw flag
+        # let `--force` alone (with the default --read-only) run a repair-capable
+        # fsck on a mounted device without any safety check.
+        effective_read_only = read_only and not force
+        if not effective_read_only:
             _assert_device_safe(ctx, target_device, force)
 
         fsck_result = run_fsck(
             target_device.path,
-            read_only=read_only and not force,
+            read_only=effective_read_only,
             force=force,
             timeout_seconds=timeout,
         )
@@ -2394,9 +2396,13 @@ def pipeline(  # noqa: C901
 
         negotiated_stage_plan = [stage.name for stage in stages]
         # Guard once for the whole plan: a read-only plan (detect/health/summary)
-        # stays usable on a mounted card, anything that writes does not.
+        # stays usable on a mounted card, anything that writes does not. The
+        # profile can supply force just as it does for the standalone endurance
+        # command, so honour both sources; --yes is still required either way.
         if pipeline_mod.plan_is_destructive(negotiated_stage_plan):
-            _assert_device_safe(ctx, target_device, force)
+            _assert_device_safe(
+                ctx, target_device, force or bool(profile_settings.force)
+            )
         results = pipeline_mod.run_pipeline(run_ctx, stages)
         aggregated_status = _aggregate_pipeline_status(results)
         stage_payloads = [result.model_dump() for result in results]

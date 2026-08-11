@@ -59,14 +59,20 @@ DEFAULT_STAGE_ORDER = [
 # Stages that write raw blocks to the device, and so must clear the
 # mounted/system-disk safety checks before a pipeline runs them.
 #
-# `workload-smallfiles` is deliberately absent: it writes through a mounted
-# filesystem, so demanding an unmounted device would make it unrunnable.
-# `detect`, `health`, and `summary` only read.
+# Deliberately absent:
+#   surface-scan     `_surface_stage` calls run_surface_scan() with the default
+#                    mode="readonly", which never writes. Only the standalone
+#                    `tfqa surface-scan --mode destructive` writes, and that
+#                    command guards itself.
+#   filesystem-check `_filesystem_check_stage` calls run_fsck() with the default
+#                    read_only=True.
+#   workload-smallfiles  writes through a mounted filesystem, so demanding an
+#                    unmounted device would make it unrunnable.
+#   detect / health / summary  read only.
 DESTRUCTIVE_STAGES = frozenset(
     {
         "quick-test",
         "full-capacity-test",
-        "surface-scan",
         "performance",
         "endurance",
         "image",
