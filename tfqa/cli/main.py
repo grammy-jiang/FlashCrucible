@@ -1080,8 +1080,14 @@ def performance(
             )
             message = f"Sequential performance test completed for {target_device.path}"
 
+        # Reflect what the engine reported. This was hardcoded to "ok", so a
+        # failing benchmark would still have been announced as a success.
+        payload_status = payload.get("status")
+        perf_status: Literal["ok", "fail", "error"] = (
+            "ok" if payload_status in (None, "ok") else "fail"
+        )
         resp = CLIResponse(
-            status="ok",
+            status=perf_status,
             command=command_name,
             message=message,
             device={"path": target_device.path},

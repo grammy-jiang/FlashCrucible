@@ -30,6 +30,10 @@ ERROR_CODES: dict[str, ErrorInfo] = {
         "exit_code": 3,
         "message": "I/O failure during device access.",
     },
+    "NOT_IMPLEMENTED": {
+        "exit_code": 3,
+        "message": "The requested engine is not implemented on this build.",
+    },
     "REMOTE_PUSH_FAILED": {
         "exit_code": 1,
         "message": "Automation report push failed for required endpoint(s).",

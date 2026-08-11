@@ -1,15 +1,29 @@
+"""Tests for the surface scan engine.
+
+Without `badblocks` this used to return `_simulate_surface_scan`: a
+`coverage_percent` derived from device size and `read_errors = 0 if readonly
+else 1` -- a coverage figure and a defect count for a physical surface check
+that never touched the card. Both landed in `metrics`, which `trends`
+aggregates, while the `tool: "simulated"` marker sat in `details`, which it
+does not.
+
+The tests that used to live here pinned that behaviour, one of them named
+`test_surface_scan_non_removable_injects_read_error`.
+"""
+
 from __future__ import annotations
 
-import math
 from typing import cast
 from unittest.mock import patch
 
+import pytest
+
 from tfqa.core.errors import ToolNotFoundError
 from tfqa.core.models import DeviceInfo
-from tfqa.tests.surface.scan import SurfaceScanMetrics, run_surface_scan
+from tfqa.tests.surface.scan import run_surface_scan
 
 
-def make_device(is_removable: bool, transport: str = "usb") -> DeviceInfo:
+def make_device(is_removable: bool = True, transport: str = "usb") -> DeviceInfo:
     return DeviceInfo(
         path="/dev/fake",
         name="fake",
@@ -24,42 +38,61 @@ def make_device(is_removable: bool, transport: str = "usb") -> DeviceInfo:
     )
 
 
-def _ensure_surface_metrics(metrics: dict[str, object]) -> SurfaceScanMetrics:
-    return SurfaceScanMetrics(
-        pass_count=cast(int, metrics["pass_count"]),
-        coverage_percent=cast(float, metrics["coverage_percent"]),
-        read_errors=cast(int, metrics["read_errors"]),
-        duration_seconds=cast(float, metrics["duration_seconds"]),
-        average_latency_ms=cast(float, metrics["average_latency_ms"]),
-    )
+TOOL_RESULT = {
+    "pass_count": 2,
+    "coverage_percent": 99.5,
+    "read_errors": 3,
+    "duration_seconds": 45.0,
+    "average_latency_ms": 2.5,
+    "pass_stats": [],
+}
 
 
-def test_surface_scan_defaults_for_removable_device() -> None:
-    device = make_device(is_removable=True, transport="usb")
-    with patch(
-        "tfqa.ext.badblocks.run_badblocks_readonly",
-        side_effect=ToolNotFoundError("badblocks"),
-    ):
-        result = run_surface_scan(device, pass_count=2, duration_seconds=45.0)
+class WithoutBadblocks:
+    """The tool is missing, so there is nothing to report."""
 
-    assert result["status"] == "ok"
-    scan_metrics = _ensure_surface_metrics(result["metrics"])
-    assert scan_metrics.pass_count == 2
-    assert math.isclose(scan_metrics.duration_seconds, 45.0, rel_tol=1e-6)
-    assert scan_metrics.read_errors == 0
-    assert 75.0 <= scan_metrics.coverage_percent <= 100.0
-    assert scan_metrics.average_latency_ms >= 2.0
+    @pytest.mark.parametrize("removable", [True, False])
+    def test_refuses_rather_than_simulating(self, removable: bool) -> None:
+        device = make_device(is_removable=removable)
+        with patch(
+            "tfqa.ext.badblocks.run_badblocks_readonly",
+            side_effect=ToolNotFoundError("badblocks"),
+        ):
+            with pytest.raises(ToolNotFoundError):
+                run_surface_scan(device, pass_count=2, duration_seconds=45.0)
+
+    def test_destructive_mode_also_refuses(self) -> None:
+        with patch(
+            "tfqa.ext.badblocks.run_badblocks_write",
+            side_effect=ToolNotFoundError("badblocks"),
+        ):
+            with pytest.raises(ToolNotFoundError):
+                run_surface_scan(make_device(), mode="destructive")
 
 
-def test_surface_scan_non_removable_injects_read_error() -> None:
-    device = make_device(is_removable=False, transport="sata")
-    with patch(
-        "tfqa.ext.badblocks.run_badblocks_readonly",
-        side_effect=ToolNotFoundError("badblocks"),
-    ):
-        result = run_surface_scan(device, pass_count=1)
+class WithBadblocks:
+    """Real tool output is reported unchanged."""
 
-    scan_metrics = _ensure_surface_metrics(result["metrics"])
-    assert math.isclose(scan_metrics.average_latency_ms, 2.0, rel_tol=1e-9)
-    assert scan_metrics.coverage_percent >= 85.0
-    assert scan_metrics.coverage_percent >= 85.0
+    def test_reports_what_the_tool_measured(self) -> None:
+        with patch(
+            "tfqa.ext.badblocks.run_badblocks_readonly", return_value=dict(TOOL_RESULT)
+        ):
+            result = run_surface_scan(make_device(), pass_count=2)
+
+        metrics = cast(dict[str, object], result["metrics"])
+        assert result["status"] == "ok"
+        assert metrics["pass_count"] == 2
+        assert metrics["coverage_percent"] == 99.5
+        assert metrics["read_errors"] == 3
+        assert cast(dict[str, object], result["details"])["tool"] == "badblocks"
+
+    def test_read_errors_are_not_invented(self) -> None:
+        # The old code returned 1 for a non-removable device in destructive
+        # mode regardless of what the surface actually looked like.
+        clean = dict(TOOL_RESULT, read_errors=0)
+        with patch("tfqa.ext.badblocks.run_badblocks_write", return_value=clean):
+            result = run_surface_scan(
+                make_device(is_removable=False), mode="destructive"
+            )
+
+        assert cast(dict[str, object], result["metrics"])["read_errors"] == 0

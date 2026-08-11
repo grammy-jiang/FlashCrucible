@@ -158,31 +158,22 @@ What is needed:
 *Effort: medium-to-large. Value: high — without it, the agent story breaks on exactly the commands
 that take real time.*
 
-#### F2. Stop the performance fallback inventing throughput — *known defect*
+#### F2. Stop the engines inventing measurements — *done*
 
-When `fio` is absent, both performance engines return figures derived from device properties
-rather than measurement: `basic.py` uses a flat `240.0` for removable devices, `random.py`
-computes one from block size and queue depth. Both return `status: "ok"` and place the numbers in
-`metrics`, which is what `trends` aggregates. The `mode: "simulated"` marker sits in `details`,
-which `trends` never reads.
+Resolved in [#11](https://github.com/grammy-jiang/FlashCrucible/issues/11). The scope turned out
+to be four engines, not one: `performance/basic`, `performance/random`, `surface/scan`, and
+`endurance/simple`. All of them wrote synthesised figures into `metrics`, which is what `trends`
+aggregates, while any marker sat in `details`, which it never reads. `endurance` was the worst —
+it did no device I/O whatsoever and reported "58 TB written, 0 errors" against a device path that
+did not exist.
 
-So a 240 MB/s figure that was never measured can appear in a throughput trend, indistinguishable
-from a real one. This is the same defect that was removed from the health readers, surviving in a
-module the health work did not touch — found by an AI reviewer checking a README claim against the
-code rather than against the documentation.
+Engines now refuse: `ToolNotFoundError` propagates from `performance` and `surface-scan`, and
+`endurance` raises `NotImplementedEngineError`. Pipelines record an unavailable stage as
+`skipped`, so it contributes no metrics and does not fail the run.
 
-Options, in order of preference:
-
-1. Raise `ToolNotFoundError` and let `performance` report the measurement as unavailable, matching
-   what `health` now does.
-2. Keep a clearly-labelled estimate, but move the marker somewhere `trends` respects and exclude
-   simulated runs from aggregation.
-
-Option 1 is consistent with the rest of the project. Either way the fix belongs with **E**, since
-the result schema should make "measured" versus "estimated" explicit rather than leaving it to a
-key in `details`.
-
-*Effort: small. Value: high — it is a correctness bug in output people make decisions from.*
+The lesson is recorded here because it recurred: this was the *same* defect removed from the
+health readers in #8, surviving in modules that work never touched. A claim about the codebase is
+worth checking against the codebase, not against the module you just fixed.
 
 #### G. Tool requirements in `describe`
 
@@ -215,7 +206,7 @@ Each item below is tracked as a GitHub issue, collected under
 
 | Phase | Item | Issue | Rationale |
 | --- | --- | --- | --- |
-| 0 | **F2** | [#11](https://github.com/grammy-jiang/FlashCrucible/issues/11) | A live correctness bug in output people act on; small |
+| ~~0~~ | ~~**F2**~~ | [#11](https://github.com/grammy-jiang/FlashCrucible/issues/11) | **Done** — four engines, not one |
 | 1 | **B** | [#12](https://github.com/grammy-jiang/FlashCrucible/issues/12) | Currently run by hand; already caught a real host dependency |
 | 1 | **C** | [#13](https://github.com/grammy-jiang/FlashCrucible/issues/13) | Removes a recurring source of avoidable CI failures |
 | 1 | **G** | [#14](https://github.com/grammy-jiang/FlashCrucible/issues/14) | Small; removes guesswork for callers |

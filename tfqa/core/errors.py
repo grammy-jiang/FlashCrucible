@@ -24,6 +24,8 @@ ERROR_CODE = {
     "RUNTIME_IO_ERROR": 1,  # I/O operation failed
     "TIMEOUT": 1,  # Operation exceeded timeout
     "INTERRUPTED": 130,  # User interruption (Ctrl-C)
+    # Capability errors
+    "NOT_IMPLEMENTED": 3,  # The engine cannot do real work on this build
     # Internal errors
     "INTERNAL_ERROR": 1,  # Unexpected exception
     "REMOTE_PUSH_FAILED": 1,  # Automation endpoints refused the report
@@ -119,6 +121,27 @@ class ToolNotFoundError(TFQAError):
             f"Required tool not found: {tool_name}",
             "EXT_TOOL_MISSING",
             details or {"tool_name": tool_name},
+        )
+
+
+class NotImplementedEngineError(TFQAError):
+    """The engine cannot do real work, so it refuses to report a result.
+
+    Distinct from a missing external tool: nothing can be installed to make this
+    one work. It exists so an unimplemented engine fails loudly instead of
+    returning numbers it never measured.
+    """
+
+    def __init__(
+        self, engine: str, reason: str, details: dict[str, Any] | None = None
+    ) -> None:
+        base: dict[str, Any] = {"engine": engine, "reason": reason}
+        if details:
+            base.update(details)
+        super().__init__(
+            f"{engine} is not implemented: {reason}",
+            "NOT_IMPLEMENTED",
+            base,
         )
 
 

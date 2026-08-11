@@ -20,11 +20,11 @@ uv run tfqa capabilities              # which test tools does this host have?
 uv run tfqa quick-test --device /dev/sdX --dry-run
 ```
 
-> **Status: alpha.** 23 commands, 324 tests, typed and linted in CI. The safety guardrails,
-> dry-run previews, and JSON contract all do what they say, and `health` reports what it cannot
-> read rather than guessing. One exception remains: `performance` synthesises throughput figures
-> when `fio` is absent — see [Known limitations](#known-limitations). Read [Safety](#safety) and
-> that list before pointing this at a card you care about.
+> **Status: alpha.** 23 commands, 334 tests, typed and linted in CI. The safety guardrails,
+> dry-run previews, and JSON contract all do what they say. No engine reports a number it did
+> not measure: one that cannot do real work refuses rather than estimating. Read
+> [Safety](#safety) and [Known limitations](#known-limitations) before pointing this at a card
+> you care about.
 
 ---
 
@@ -50,8 +50,8 @@ commands and read the same results.
 | `quick-test` | Fast counterfeit / capacity check via `f3probe` | **Yes** |
 | `full-capacity-test` | Destructive full-span write + verify, detects wrapping fakes | **Yes** |
 | `surface-scan` | Bad-block sweep via `badblocks`, with health snapshot | **Yes** |
-| `performance` | Throughput / latency / IOPS via `fio`, synthetic fallback | **Yes** |
-| `endurance` | Burn-in loop, profile-driven | **Yes** |
+| `performance` | Throughput / latency / IOPS via `fio` (required) | **Yes** |
+| `endurance` | Burn-in loop — **not implemented**, refuses to run | — |
 | `workload-smallfiles` | Small-file create/read/delete metadata stress | **Yes** |
 | `image-flash` | Write an image with `dd`, verify with `cmp` | **Yes** |
 | `filesystem-check` | Run `fsck` against the filesystem | Only with `--force` |
@@ -209,7 +209,7 @@ Exit codes are stable (`tfqa/core/error_codes.py`):
 | `0` | Success |
 | `1` | Test ran and failed |
 | `2` | Invalid arguments or configuration |
-| `3` | Environment problem — missing tool, permissions, unsafe device, I/O error |
+| `3` | Environment problem — missing tool, permissions, unsafe device, unimplemented engine |
 
 ## How it is organised
 
@@ -277,34 +277,25 @@ standing in for block devices. It also passes with every external binary hidden 
 
 ## Known limitations
 
-### Known defect
+Honest list of what is constrained. Contributions welcome.
 
-**`performance` synthesises throughput when `fio` is missing.** Both engines fall back to figures
-derived from device properties — a flat `240.0` for removable devices in
-`tfqa/tests/performance/basic.py:80`, a computed value in `random.py:125` — and return
-`status: "ok"`. The numbers land in `metrics`, which is what `trends` aggregates, while the
-`mode: "simulated"` marker sits in `details`, which `trends` never reads. So a figure that was
-never measured can appear in a throughput trend, indistinguishable from a real one.
-
-Until it is fixed: run `tfqa capabilities` to confirm `fio` is installed, or check
-`data.details.mode` before believing a `performance` result. This is the same class of problem as
-the fabricated health data that has since been removed. Tracked as
-[#11](https://github.com/grammy-jiang/FlashCrucible/issues/11); see
-[docs/agent-readiness.md](https://github.com/grammy-jiang/FlashCrucible/blob/master/docs/agent-readiness.md)
-for the wider plan.
-
-### Constraints
-
-These are inherent rather than defects. Contributions welcome.
-
-1. **Health data needs the right hardware.** Wear data comes from eMMC `EXT_CSD` registers
+1. **`endurance` is not implemented.** It performed no device I/O and reported invented figures,
+   so it now refuses with `NOT_IMPLEMENTED` rather than lying. Use `quick-test` or
+   `full-capacity-test` for real measurements. Implementing it properly makes it a genuinely
+   long-running command, which needs
+   [#17](https://github.com/grammy-jiang/FlashCrucible/issues/17) first.
+2. **Some commands need their tool present.** `performance` requires `fio` and `surface-scan`
+   requires `badblocks`; without them they report the tool as missing instead of estimating.
+   Run `tfqa capabilities` to see what this host can do. In a `pipeline` an unavailable stage is
+   recorded as `skipped`, so one missing tool does not fail an otherwise good run.
+3. **Health data needs the right hardware.** Wear data comes from eMMC `EXT_CSD` registers
    (usually root) or from `sdmon` on industrial SD cards. A consumer card in a USB reader can
    supply neither, so `tfqa health` reports what is unavailable and why rather than guessing.
-2. **A wrapping counterfeit's real size needs `quick-test`.** `full-capacity-test` detects the
+4. **A wrapping counterfeit's real size needs `quick-test`.** `full-capacity-test` detects the
    wrap and says so, but recovering the true capacity takes f3probe's binary search, which
    `tfqa quick-test` runs. The full test only reports a real size when the device stopped
    accepting writes, where the answer is unambiguous.
-3. **Raw device access needs root.** `full-capacity-test`, `surface-scan --mode destructive`,
+5. **Raw device access needs root.** `full-capacity-test`, `surface-scan --mode destructive`,
    `image-flash`, and `mmc extcsd read` all need write or ioctl access to the block device.
 
 ## Documentation
