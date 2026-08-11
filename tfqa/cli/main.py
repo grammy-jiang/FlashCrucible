@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import uuid
 import subprocess
 import sys
 import time
@@ -474,11 +475,15 @@ def _begin_run(
     pid: int | None = None,
     total_bytes: int = 0,
 ) -> runstate.RunStatus:
+    tracked_pid = pid if pid is not None else os.getpid()
     status = runstate.RunStatus(
         run_id=run_id,
         command=command_name,
         device_path=device_path,
-        pid=pid if pid is not None else os.getpid(),
+        pid=tracked_pid,
+        # Distinguishes this process from a later reuse of its pid, so cancel
+        # cannot signal a stranger.
+        pid_start=runstate.process_start_ticks(tracked_pid),
         total_bytes=total_bytes,
     )
     runstate.write(status, log_dir)
@@ -499,26 +504,39 @@ def _finish_run(
     status.message = message
     status.error_code = error_code
     if metrics:
+        # `isinstance(True, int)` is true, so flags would otherwise be recorded
+        # as measurements.
         status.metrics = {
-            k: v for k, v in metrics.items() if isinstance(v, (int, float))
+            k: v
+            for k, v in metrics.items()
+            if isinstance(v, (int, float)) and not isinstance(v, bool)
         }
     runstate.write(status, log_dir)
 
 
 def _progress_recorder(
-    status: runstate.RunStatus, log_dir: Path | None, phase: str
-) -> Callable[[int, int], None]:
-    """Persist progress, throttled so a fast loop does not thrash the disk."""
+    status: runstate.RunStatus, log_dir: Path | None, passes: int = 1
+) -> Callable[[int, int, str], None]:
+    """Persist progress across every pass, throttled to spare the disk.
+
+    A run that writes and then verifies covers the span twice. Treating one
+    span as the whole job reported 100% when writing finished and then dropped
+    back to nearly zero when verification began, so the total accounts for all
+    passes and each pass contributes its own slice.
+    """
 
     last = [0.0]
+    seen: dict[str, int] = {}
 
-    def record(done: int, total: int) -> None:
+    def record(done: int, total: int, phase: str = "working") -> None:
+        seen[phase] = done
         status.phase = phase
-        status.completed_bytes = done
-        status.total_bytes = total
-        status.wrote_to_device = status.wrote_to_device or done > 0
+        status.completed_bytes = sum(seen.values())
+        status.total_bytes = total * passes
+        if phase == "write" and done > 0:
+            status.wrote_to_device = True
         now = time.time()
-        if now - last[0] >= 1.0 or done >= total:
+        if now - last[0] >= 1.0 or status.completed_bytes >= status.total_bytes:
             last[0] = now
             runstate.write(status, log_dir)
 
@@ -657,7 +675,15 @@ def _build_cli_overrides(
 
 
 def _generate_run_id() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    """A run id unique enough to name a durable state file.
+
+    Second-granularity alone collided: two runs started in the same second
+    shared a state file, so `status` and `cancel` acted on whichever wrote
+    last. Concurrent runs on different devices were enough to trigger it.
+    """
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"{stamp}-{uuid.uuid4().hex[:8]}"
 
 
 def _build_log_path(log_dir: Path | None, run_id: str | None) -> Path | None:
@@ -1958,7 +1984,8 @@ def full_capacity_test(
                 block_size=block_size,
                 limit_bytes=limit_bytes,
                 seed=seed,
-                progress=_progress_recorder(tracked, _config.log_dir, "write-verify"),
+                # write then verify: two passes over the span.
+                progress=_progress_recorder(tracked, _config.log_dir, passes=2),
             )
         except BaseException as exc:
             # Recorded and re-raised, never swallowed. Catching only TFQAError
@@ -1986,7 +2013,6 @@ def full_capacity_test(
             else "Full capacity test reported issues."
         )
         message = payload.get("message") or default_message
-        run_id = _generate_run_id()
         data: dict[str, object] = dict(payload)
         data["device"] = {"path": target_device.path}
         log_path = _build_log_path(_config.log_dir, run_id)
@@ -3441,22 +3467,38 @@ def cancel_command(
         _config = _ensure_config(ctx)
         cancelled = runstate.cancel(run_id, _config.log_dir)
 
+        # The resulting state is reported, not assumed. A pid that had already
+        # exited leaves the run orphaned, and a process still finishing a write
+        # is still running -- calling either "cancelled" would be a lie.
+        # "ok" means the run is no longer running, however it got there. A
+        # process that ignored SIGTERM is the one case the caller must act on.
+        stopped = cancelled.state != "running"
+        outcome = {
+            "cancelled": f"Run {run_id} cancelled.",
+            "orphaned": (f"Run {run_id} was already gone; nothing was signalled."),
+            "running": (
+                f"Run {run_id} was asked to stop but is still running. "
+                "It may be finishing a write; check again shortly."
+            ),
+        }
         resp = CLIResponse(
-            status="ok",
+            status="ok" if stopped else "fail",
             command=command_name,
             run_id=run_id,
-            message=f"Run {run_id} cancelled.",
+            message=outcome.get(cancelled.state, f"Run {run_id} is {cancelled.state}."),
             data={"run": cancelled.to_dict()},
         )
         if actual_output == "json":
             print(resp.model_dump_json())
-            return
-        print(resp.message)
-        if cancelled.wrote_to_device:
-            print(
-                "This run had already written to the device. Its contents are "
-                "partial; re-flash or re-test before trusting the card."
-            )
+        else:
+            print(resp.message)
+            if cancelled.wrote_to_device:
+                print(
+                    "This run had already written to the device. Its contents "
+                    "are partial; re-flash or re-test before trusting the card."
+                )
+        if not stopped:
+            raise SystemExit(1)
 
     except TFQAError as e:
         resp = CLIResponse(

@@ -13,6 +13,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import tempfile
 from collections.abc import Iterator
 from pathlib import Path
@@ -21,7 +22,7 @@ from unittest.mock import patch
 import pytest
 from typer.testing import CliRunner
 
-from tfqa.cli.main import _detach, app
+from tfqa.cli.main import _detach, _generate_run_id, _progress_recorder, app
 from tfqa.core import runstate
 from tfqa.core.errors import ArgumentError
 from tfqa.core.models import CLIResponse, DeviceInfo
@@ -41,6 +42,72 @@ def _status(run_id: str = "r1", **kwargs: object) -> runstate.RunStatus:
         command=str(kwargs.pop("command", "full-capacity-test")),
         **kwargs,  # type: ignore[arg-type]
     )
+
+
+class TestRunIdentity:
+    def test_ids_do_not_collide_within_a_second(self) -> None:
+        # Second-granularity ids alone meant two runs started in the same
+        # second shared a state file, so status and cancel acted on whichever
+        # wrote last.
+        assert len({_generate_run_id() for _ in range(200)}) == 200
+
+    def test_a_run_keeps_one_id_end_to_end(self, log_dir: Path) -> None:
+        # The id printed in the response must be the one `tfqa status` finds.
+        image = log_dir / "dev.img"
+        image.write_bytes(b"\0" * (128 * 1024))
+        device = DeviceInfo(
+            path=str(image),
+            name="dev.img",
+            size_bytes=128 * 1024,
+            is_removable=True,
+            is_system_disk=False,
+            mountpoints=[],
+            transport="usb",
+        )
+        with patch("tfqa.core.devices.get_device", return_value=device):
+            result = runner.invoke(
+                app,
+                [
+                    "--log-dir",
+                    str(log_dir),
+                    "--yes",
+                    "full-capacity-test",
+                    "--device",
+                    str(image),
+                    "--force",
+                    "--output",
+                    "json",
+                ],
+            )
+        assert result.exit_code == 0, result.stdout
+        reported = CLIResponse.model_validate_json(result.stdout).run_id
+        (tracked,) = runstate.list_runs(log_dir)
+        assert reported == tracked.run_id
+
+    def test_the_recorded_start_time_identifies_the_process(self) -> None:
+        assert runstate.process_start_ticks(os.getpid()) is not None
+
+    def test_an_absent_process_has_no_start_time(self) -> None:
+        assert runstate.process_start_ticks(2**22) is None
+
+
+class TestProgressAcrossPasses:
+    def test_write_and_verify_are_separate_spans(self, log_dir: Path) -> None:
+        # One span for both passes reported 100% when writing finished and
+        # then dropped back to nearly zero once verification began.
+        status = _status(pid=os.getpid())
+        record = _progress_recorder(status, log_dir, passes=2)
+
+        record(100, 100, "write")
+        assert status.percent == 50.0
+        record(100, 100, "verify")
+        assert status.percent == 100.0
+
+    def test_only_writing_marks_the_device_as_written(self, log_dir: Path) -> None:
+        # A read-only verify pass must not claim the card was touched.
+        status = _status(pid=os.getpid())
+        _progress_recorder(status, log_dir, passes=1)(10, 10, "verify")
+        assert not status.wrote_to_device
 
 
 class TestStatePersistence:
@@ -70,6 +137,38 @@ class TestStatePersistence:
         runstate.state_path("bad", log_dir).write_text("{not json")
         with pytest.raises(ArgumentError):
             runstate.read("bad", log_dir)
+
+    def test_an_incomplete_state_file_is_an_argument_error(self, log_dir: Path) -> None:
+        # Valid JSON missing required fields used to raise TypeError straight
+        # out of the CLI, bypassing the typed error handling entirely.
+        runstate.state_path("partial", log_dir).write_text("{}")
+        with pytest.raises(ArgumentError):
+            runstate.read("partial", log_dir)
+
+    def test_an_unreadable_entry_is_listed_not_hidden(self, log_dir: Path) -> None:
+        # Dropping it silently hides exactly the crashed run being diagnosed.
+        runstate.write(_status("20260101T000000Z-aaaaaaaa"), log_dir)
+        runstate.state_path("20260102T000000Z-bbbbbbbb", log_dir).write_text("{oops")
+
+        listed = {r.run_id: r for r in runstate.list_runs(log_dir)}
+        assert len(listed) == 2
+        broken = listed["20260102T000000Z-bbbbbbbb"]
+        assert broken.state == "orphaned"
+        assert "unreadable" in str(broken.message)
+
+    def test_flags_are_not_recorded_as_measurements(self, log_dir: Path) -> None:
+        # `isinstance(True, int)` is true, so booleans leaked into metrics.
+        from tfqa.cli.main import _finish_run
+
+        status = _status(pid=os.getpid())
+        runstate.write(status, log_dir)
+        _finish_run(
+            status,
+            log_dir,
+            state="completed",
+            metrics={"fake_detected": False, "coverage_percent": 100.0},
+        )
+        assert status.metrics == {"coverage_percent": 100.0}
 
     def test_writes_are_atomic(self, log_dir: Path) -> None:
         # A reader polling the file must never see it half-written.
@@ -107,6 +206,33 @@ class TestOrphanDetection:
         assert runstate.read("r1", log_dir).state == "completed"
 
 
+def _stubborn_child(log_dir: Path) -> subprocess.Popen[bytes]:
+    """A process that ignores SIGTERM, ready before it is signalled.
+
+    Spawning and signalling immediately raced the interpreter's start-up, so
+    the handler was not yet installed and the child died -- testing the
+    opposite of what was intended.
+    """
+
+    ready = log_dir / "ready"
+    child = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import signal, sys, time\n"
+            "signal.signal(signal.SIGTERM, lambda *a: None)\n"
+            "open(sys.argv[1], 'w').close()\n"
+            "time.sleep(30)",
+            str(ready),
+        ]
+    )
+    deadline = time.time() + 10
+    while not ready.exists() and time.time() < deadline:
+        time.sleep(0.01)
+    assert ready.exists(), "child never signalled readiness"
+    return child
+
+
 class TestCancellation:
     def test_cancelling_signals_the_process(self, log_dir: Path) -> None:
         child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
@@ -136,6 +262,71 @@ class TestCancellation:
         runstate.write(_status(state="completed"), log_dir)
         with pytest.raises(ArgumentError):
             runstate.cancel("r1", log_dir)
+
+    def test_a_reused_pid_is_not_signalled(self, log_dir: Path) -> None:
+        # `kill(pid, 0)` only proves *a* process exists. Signalling on that
+        # alone sends SIGTERM to whatever inherited the pid -- as root, to
+        # anything at all.
+        runstate.write(
+            _status(pid=os.getpid(), pid_start=1, state="running"),
+            log_dir,
+        )
+        with pytest.raises(ArgumentError):
+            # read() sees the mismatch and reports the run as orphaned, so
+            # cancel refuses before reaching os.kill.
+            runstate.cancel("r1", log_dir)
+
+    def test_a_process_that_ignores_the_signal_is_still_running(
+        self, log_dir: Path
+    ) -> None:
+        # SIGTERM is a request. Marking the run cancelled while the process is
+        # still writing would be a lie.
+        child = _stubborn_child(log_dir)
+        try:
+            runstate.write(
+                _status(
+                    pid=child.pid,
+                    pid_start=runstate.process_start_ticks(child.pid),
+                    state="running",
+                ),
+                log_dir,
+            )
+            result = runstate.cancel("r1", log_dir, grace_seconds=0.3)
+
+            assert result.state == "running"
+            assert result.finished_at is None
+            assert "still running" in str(result.message)
+        finally:
+            child.kill()
+            child.wait(timeout=10)
+
+    def test_the_cancel_command_reports_a_run_it_could_not_stop(
+        self, log_dir: Path
+    ) -> None:
+        # Reporting ok/"cancelled" regardless of the outcome told a caller the
+        # card was free when the run was still writing to it.
+        unstopped = _status(state="running", message="SIGTERM sent, still running.")
+        with patch.object(runstate, "cancel", return_value=unstopped):
+            result = runner.invoke(
+                app, ["--log-dir", str(log_dir), "cancel", "r1", "--output", "json"]
+            )
+
+        payload = CLIResponse.model_validate_json(result.stdout)
+        assert payload.status == "fail"
+        assert "still running" in payload.message
+        assert result.exit_code == 1
+
+    def test_the_cancel_command_reports_a_run_already_gone(self, log_dir: Path) -> None:
+        gone = _status(state="orphaned", message="Already exited.")
+        with patch.object(runstate, "cancel", return_value=gone):
+            result = runner.invoke(
+                app, ["--log-dir", str(log_dir), "cancel", "r1", "--output", "json"]
+            )
+
+        payload = CLIResponse.model_validate_json(result.stdout)
+        assert payload.status == "ok"
+        assert "nothing was signalled" in payload.message
+        assert result.exit_code == 0
 
     def test_cancelling_a_vanished_process_records_it(self, log_dir: Path) -> None:
         runstate.write(_status(pid=2**22, state="running"), log_dir)
@@ -262,7 +453,7 @@ class TestForegroundRunsAreTracked:
         tracked = runstate.read(run_id, log_dir)
         assert tracked.state == "completed"
         assert tracked.percent == 100.0
-        assert tracked.phase == "write-verify"
+        assert tracked.phase == "verify"
         assert tracked.wrote_to_device
         assert "coverage_percent" in tracked.metrics
 

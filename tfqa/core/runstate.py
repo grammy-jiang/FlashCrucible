@@ -36,6 +36,33 @@ STATE_SUFFIX = ".state.json"
 TERMINAL_STATES = frozenset({"completed", "failed", "cancelled", "orphaned"})
 
 
+def _proc_stat(pid: int) -> tuple[str, int] | None:
+    """This process's run state and start time, or None if it is gone."""
+
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    # The comm field may contain spaces and parentheses, so parse after it.
+    try:
+        tail = stat[stat.rindex(")") + 2 :].split()
+        return tail[0], int(tail[19])  # state (3), starttime (22)
+    except (ValueError, IndexError):  # pragma: no cover - unexpected format
+        return None
+
+
+def process_start_ticks(pid: int) -> int | None:
+    """The process's start time, used to tell it from a later reuse of its pid.
+
+    `kill(pid, 0)` only says *a* process exists. Signalling on that alone means
+    a crashed run whose pid has been recycled sends SIGTERM to an unrelated
+    process -- which matters most when tfqa runs as root.
+    """
+
+    stat = _proc_stat(pid)
+    return stat[1] if stat else None
+
+
 @dataclass
 class RunStatus:
     """What a caller can learn about a run without waiting for it."""
@@ -44,6 +71,7 @@ class RunStatus:
     command: str
     state: RunState = "running"
     pid: int | None = None
+    pid_start: int | None = None
     device_path: str | None = None
     phase: str | None = None
     completed_bytes: int = 0
@@ -90,16 +118,29 @@ def write(status: RunStatus, log_dir: Path | None = None) -> Path:
     return target
 
 
-def _process_alive(pid: int | None) -> bool:
+def _is_our_process(pid: int | None, pid_start: int | None) -> bool:
+    """True only when this pid is still the process we started."""
+
     if not pid:
         return False
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
-    except PermissionError:  # running, owned by someone else
+    except PermissionError:  # exists, owned by someone else
+        return pid_start is None
+    stat = _proc_stat(pid)
+    if stat is None:  # pragma: no cover - exited between the two checks
+        return False
+    state, started = stat
+    if state == "Z":
+        # A zombie has exited; only its exit status is still held. Treating it
+        # as alive would keep a finished run reported as running.
+        return False
+    if pid_start is None:
+        # Recorded before start times were tracked; existence is all we have.
         return True
-    return True
+    return started == pid_start
 
 
 def read(run_id: str, log_dir: Path | None = None) -> RunStatus:
@@ -120,11 +161,19 @@ def read(run_id: str, log_dir: Path | None = None) -> RunStatus:
         ) from exc
 
     fields = {f for f in RunStatus.__dataclass_fields__}
-    status = RunStatus(**{k: v for k, v in payload.items() if k in fields})
+    try:
+        status = RunStatus(**{k: v for k, v in payload.items() if k in fields})
+    except TypeError as exc:
+        # A syntactically valid but incomplete file would otherwise raise
+        # TypeError out of the CLI, bypassing the typed error handling.
+        raise ArgumentError(
+            message=f"Run state for {run_id!r} is incomplete: {exc}",
+            details={"run_id": run_id, "path": str(target)},
+        ) from exc
 
     # A run marked running whose process is gone was killed or crashed. Saying
     # so beats reporting progress that will never advance.
-    if status.state == "running" and not _process_alive(status.pid):
+    if status.state == "running" and not _is_our_process(status.pid, status.pid_start):
         status.state = "orphaned"
         status.message = (
             "The process is no longer running and did not record an outcome; "
@@ -142,14 +191,25 @@ def list_runs(log_dir: Path | None = None, limit: int = 50) -> list[RunStatus]:
         run_id = path.name[len("run-") : -len(STATE_SUFFIX)]
         try:
             found.append(read(run_id, log_dir))
-        except ArgumentError:  # unreadable state is skipped, not fatal
-            continue
+        except ArgumentError as exc:
+            # Reported, not dropped. Silently omitting a corrupt entry hides
+            # exactly the crashed run someone is trying to diagnose.
+            found.append(
+                RunStatus(
+                    run_id=run_id,
+                    command="unknown",
+                    state="orphaned",
+                    message=f"State file unreadable: {exc.message}",
+                )
+            )
         if len(found) >= limit:
             break
     return found
 
 
-def cancel(run_id: str, log_dir: Path | None = None) -> RunStatus:
+def cancel(
+    run_id: str, log_dir: Path | None = None, grace_seconds: float = 2.0
+) -> RunStatus:
     """Ask a run to stop, and record that it was asked.
 
     The signal is delivered to the process; a run that is mid-write will leave
@@ -167,6 +227,13 @@ def cancel(run_id: str, log_dir: Path | None = None) -> RunStatus:
             message=f"Run {run_id!r} has no recorded process to cancel",
             details={"run_id": run_id},
         )
+    if not _is_our_process(status.pid, status.pid_start):
+        # The pid may have been recycled; signalling it would hit a stranger.
+        status.state = "orphaned"
+        status.message = "The process had already exited; nothing was signalled."
+        write(status, log_dir)
+        return status
+
     try:
         os.kill(status.pid, signal.SIGTERM)
     except ProcessLookupError:
@@ -180,11 +247,23 @@ def cancel(run_id: str, log_dir: Path | None = None) -> RunStatus:
             details={"run_id": run_id, "pid": status.pid, "error": str(exc)},
         ) from exc
 
-    status.state = "cancelled"
-    status.finished_at = time.time()
+    # SIGTERM is a request. Give the process a moment, then report what is
+    # actually true rather than assuming it stopped.
+    deadline = time.time() + grace_seconds
+    while time.time() < deadline and _is_our_process(status.pid, status.pid_start):
+        time.sleep(0.05)
+
+    stopped = not _is_our_process(status.pid, status.pid_start)
+    status.state = "cancelled" if stopped else "running"
+    status.finished_at = time.time() if stopped else None
     status.message = (
         "Cancellation requested. A run interrupted mid-write leaves the device "
         "partially written; check wrote_to_device before reusing the card."
+        if stopped
+        else (
+            "SIGTERM sent, but the process is still running. It may be "
+            "finishing a write; check again shortly."
+        )
     )
     write(status, log_dir)
     return status

@@ -13,6 +13,7 @@ and check their output, rather than asserting the files merely parse -- which
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -151,6 +152,38 @@ class TestRealOutputValidates:
             )
         assert result.exit_code == 0, result.stdout
         _validate("image-flash", json.loads(result.stdout))
+
+    def test_a_detached_start_validates(self, tmp_path: Path) -> None:
+        # --detach returns before there is any result, so its payload is
+        # neither the normal result nor a plan. The schema rejected the only
+        # response a caller polling `tfqa status` ever sees.
+        image = tmp_path / "dev.img"
+        image.write_bytes(b"\0" * 4096)
+        device = DEVICE.model_copy(update={"path": str(image), "size_bytes": 4096})
+        with (
+            patch("tfqa.core.devices.get_device", return_value=device),
+            patch("subprocess.Popen") as popen,
+        ):
+            popen.return_value.pid = 4242
+            result = runner.invoke(
+                app,
+                [
+                    "--log-dir",
+                    str(tmp_path),
+                    "--yes",
+                    "full-capacity-test",
+                    "--device",
+                    str(image),
+                    "--force",
+                    "--detach",
+                    "--output",
+                    "json",
+                ],
+            )
+        assert result.exit_code == 0, result.stdout
+        payload = json.loads(result.stdout)
+        assert payload["data"]["detached"] is True
+        _validate("full-capacity-test", payload)
 
     def test_describe_validates_against_its_own_schema(self) -> None:
         result = runner.invoke(app, ["describe", "quick-test", "--output", "json"])

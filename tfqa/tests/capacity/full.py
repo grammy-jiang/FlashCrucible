@@ -38,7 +38,10 @@ DEFAULT_BLOCK_SIZE = 1024 * 1024
 _HEADER = struct.Struct("<QQ")  # offset, seed
 _DIGEST_SIZE = 32
 
-ProgressFn = Callable[[int, int], None]
+#: (bytes done in this pass, bytes in a pass, pass name). The pass name lets a
+#: caller account for write and verify separately; reporting both as one span
+#: showed 100% when writing finished and then dropped back to nearly zero.
+ProgressFn = Callable[[int, int, str], None]
 
 
 class Mismatch(TypedDict, total=False):
@@ -157,7 +160,7 @@ def _write_pass(
                 break
             written += size
             if progress:
-                progress(written, span)
+                progress(written, span, "write")
         flush_error = _flush_and_drop_cache(fd)
         if flush_error:
             issues.append(
@@ -225,7 +228,7 @@ def _verify_pass(
                 verified += size
             offset += size
             if progress:
-                progress(offset, span)
+                progress(offset, span, "verify")
     finally:
         os.close(fd)
     return verified, mismatches, issues
