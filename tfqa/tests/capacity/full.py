@@ -128,10 +128,15 @@ def _write_pass(
                 f"{flushed.sync_error} after {written} bytes; the device did "
                 "not commit the data it accepted"
             )
-        if flushed.cache_error:
-            # A warning, not an issue: the write itself may be sound. What is
-            # in doubt is the verify pass, which could be answered from RAM --
-            # and a wrapping counterfeit passes cleanly when that happens.
+        if flushed.cache_error and not flushed.sync_error:
+            # Only when the write is believed to have committed. If fsync
+            # failed the run has already failed for a stronger reason, and
+            # doubting the evidence for data that never arrived is noise.
+            #
+            # A warning rather than an issue: the write itself may be sound.
+            # What is in doubt is the verify pass, which could be answered from
+            # RAM -- and a wrapping counterfeit passes cleanly when that
+            # happens.
             warnings.append(
                 f"{flushed.cache_error}; the verify pass may have been served "
                 "from the page cache, so a device that silently wraps its "

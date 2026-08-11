@@ -343,6 +343,24 @@ class Options(TempDirCase):
         self.assertTrue(any("fsync" in issue for issue in result["issues"]))
         self.assertEqual(result["warnings"], [])
 
+    def test_a_failed_fsync_suppresses_the_cache_warning(self):
+        # Both failing at once is the case the test above only covered by
+        # accident. The run has already failed for a stronger reason, so
+        # doubting the evidence for data that never arrived is noise.
+        target = make_target(self.root)
+        with (
+            patch("os.fsync", side_effect=OSError(5, "Input/output error")),
+            patch(
+                "os.posix_fadvise", side_effect=OSError(1, "Operation not permitted")
+            ),
+        ):
+            result = full.run_full_capacity(
+                make_device(target), force=True, yes=True, block_size=BLOCK
+            )
+
+        self.assertEqual(result["status"], "fail")
+        self.assertEqual(result["warnings"], [])
+
     def test_max_mismatches_caps_the_report(self):
         target = make_target(self.root)
         # Nothing was written, so every block mismatches.
