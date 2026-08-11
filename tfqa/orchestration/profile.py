@@ -7,6 +7,7 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any, cast
 
+from tfqa.core import paths
 from tfqa.core.errors import ArgumentError
 from tfqa.core.models import ConfigModel
 
@@ -17,7 +18,7 @@ except ModuleNotFoundError:
 
 toml: Any = toml_impl
 
-DEFAULT_PROFILES_DIR = Path(__file__).resolve().parents[1] / "data" / "profiles"
+DEFAULT_PROFILES_DIR = paths.DEFAULT_PROFILES_DIR
 
 
 @dataclass(frozen=True)
@@ -85,9 +86,7 @@ def _coerce_positive_int(name: str, value: Any | None, default: int) -> int:
 
 
 def _resolve_profiles_dir(config: ConfigModel) -> Path:
-    if config.profiles_dir:
-        return Path(config.profiles_dir)
-    return DEFAULT_PROFILES_DIR
+    return paths.profiles_dir(config)
 
 
 def load_profile(name: str, config: ConfigModel) -> EnduranceProfile:

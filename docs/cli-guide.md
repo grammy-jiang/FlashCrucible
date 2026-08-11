@@ -4,9 +4,9 @@ Detailed notes on individual `tfqa` commands, their payloads, and the automation
 top of them. For a general introduction see the [README](../README.md); for the design rationale
 behind the UX rules see [ux-v0.md](ux-v0.md).
 
-> Several sections below reference `data/profiles/` and `data/workflows/`. Because of a path bug
-> (README, *Known limitations* #1), the defaults resolve to a non-existent `tfqa/data/` directory.
-> Pass `--profiles-dir data/profiles` or set `TFQA_WORKFLOWS_DIR=data/workflows` until it is fixed.
+> The bundled profiles, workflow combos, and JSON schemas ship inside the package under
+> `tfqa/data/`, so they resolve identically from a source checkout and from an installed wheel.
+> Point elsewhere with `--profiles-dir`, `TFQA_WORKFLOWS_DIR`, or `TFQA_SCHEMAS_DIR`.
 
 ## Contents
 
@@ -126,7 +126,7 @@ These commands let humans and AI agents stay synchronised with the CLI without h
 - **`describe <command> --output json`** returns a stable schema (`CLIResponse.data.describe`)
   documenting arguments, options, defaults, destructive flags, and required privileges. The human
   output stays a concise overview.
-- **`describe-schemas --output json`** lists every JSON schema under `data/schemas/json` with its
+- **`describe-schemas --output json`** lists every JSON schema under `tfqa/data/schemas/json` with its
   title, schema version, and description. Narrow with `--schema <name>` (e.g. `--schema
   cli_response` or `cli_response.schema.json`).
 - **`validate-schemas --output json`** parses each schema with `jsonschema.Draft7Validator.check_schema`.
@@ -155,7 +155,7 @@ The response exposes both the negotiated stage sequence (`data.stage_plan`) and 
 history entry mirrors this as `metadata.stage_plan` and `metadata.requested_stages`, which lets
 downstream reporting replay the same sequence or audit overrides.
 
-Curated combos live in `data/workflows/structured-combos.toml` (`camera-logger`,
+Curated combos live in `tfqa/data/workflows/structured-combos.toml` (`camera-logger`,
 `router-telemetry`, `full-capacity`). Pass `--combo <name>` instead of listing stages manually and
 the CLI runs the curated plan, picks the combo's recommended profile, and applies any image
 defaults it declares. The JSON response and history metadata include a `combo` record (name,
@@ -217,15 +217,15 @@ synthetic — see README *Known limitations* #5.
 
 ## Profiles and endurance metadata
 
-`tfqa profiles` inspects every TOML preset under `data/profiles/`, printing `name`, `description`
+`tfqa profiles` inspects every TOML preset under `tfqa/data/profiles/`, printing `name`, `description`
 (defaulting to "No description"), `duration_seconds`, `pass_count`, `force`, `write_pattern`, and
 the source `path`. The JSON data follows `tfqa.orchestration.profile.EnduranceProfile`, so numeric
 types and booleans are stable.
 
 ```bash
-uv run tfqa --profiles-dir data/profiles profiles
-uv run tfqa --profiles-dir data/profiles profiles --name camera-logger --output json
-uv run tfqa --profiles-dir data/profiles endurance --device /dev/sdX --profile camera-logger
+uv run tfqa profiles
+uv run tfqa profiles --name camera-logger --output json
+uv run tfqa endurance --device /dev/sdX --profile camera-logger
 ```
 
 Filtering by `--name` lets automation verify a profile before invoking a destructive endurance
@@ -265,7 +265,7 @@ uv run tfqa describe-schemas --schema trends.schema.json --output json
 ## Automation report pushes
 
 `tfqa automation-report` bundles a single `history_entry`, its `summary`, and aggregated `trends`
-into `CLIResponse.data.report`, matching `data/schemas/json/summary.schema.json` and
+into `CLIResponse.data.report`, matching `tfqa/data/schemas/json/summary.schema.json` and
 `trends.schema.json`. Validate the whole payload with `tfqa describe-schemas --schema
 automation_report.schema.json --output json`, or validate individual blocks against the
 `summary` and `trends` schemas.
@@ -309,6 +309,6 @@ and requested stage plans. The `history`, `pipeline`, and `report` commands expo
 through their JSON responses, so downstream tooling can audit what ran, replay the same plan, or
 visualise which devices saw which metrics without re-parsing log files.
 
-The profile presets under `data/profiles/` (`camera-logger.toml`, `router-telemetry.toml`) show
+The profile presets under `tfqa/data/profiles/` (`camera-logger.toml`, `router-telemetry.toml`) show
 how workloads can be packaged into reusable configurations that pair endurance passes with
 small-file stress plans for different product classes.

@@ -71,7 +71,7 @@ def _env_overrides() -> dict[str, Any]:
 
 def _normalize_paths(values: dict[str, Any]) -> dict[str, Any]:
     normalized = values.copy()
-    for key in ("log_dir", "profiles_dir", "schemas_dir"):
+    for key in ("log_dir", "profiles_dir", "schemas_dir", "workflows_dir"):
         val = normalized.get(key)
         if isinstance(val, (str, Path)):
             try:

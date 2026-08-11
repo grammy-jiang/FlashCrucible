@@ -8,18 +8,13 @@ from typing import Any
 
 import jsonschema
 
+from tfqa.core import paths
 from tfqa.reporting import summary as summary_mod
 
 FIXTURE_PATH = (
     Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "sample-run.jsonl"
 )
-SCHEMA_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "data"
-    / "schemas"
-    / "json"
-    / "summary.schema.json"
-)
+SCHEMA_PATH = paths.DEFAULT_SCHEMAS_DIR / "summary.schema.json"
 
 
 class TestReportingSummary(unittest.TestCase):

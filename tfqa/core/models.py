@@ -157,6 +157,9 @@ class ConfigModel(BaseModel):
     log_dir: Optional[Path] = None  # Override default ~/.tfqa/logs
     profiles_dir: Optional[Path] = None  # Override default profiles location
     schemas_dir: Optional[Path] = None  # Optional override for JSON schemas discovery
+    # Declared rather than relied on as an extra: TFQA_WORKFLOWS_DIR is a
+    # documented override, and only declared fields get path normalisation.
+    workflows_dir: Optional[Path] = None  # Override default combo location
     # Add more config fields as needed (timeouts, retry policies, etc.)
 
     model_config = ConfigDict(extra="allow")
