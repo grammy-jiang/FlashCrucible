@@ -2917,7 +2917,11 @@ def health(
         resp = CLIResponse(
             status="ok",
             command=command_name,
-            message=f"Health snapshot captured for {target_device.path}",
+            message=(
+                f"Health snapshot captured for {target_device.path}"
+                if snapshot.get("available")
+                else f"No health data available for {target_device.path}"
+            ),
             data=data,
         )
 
@@ -2931,7 +2935,12 @@ def health(
             print(f"Source: {source}")
         cid = snapshot.get("cid") or {}
         if cid:
-            print("CID:")
+            label = (
+                "CID"
+                if cid.get("is_card_identity")
+                else "Reader identity (not the card)"
+            )
+            print(f"{label}:")
             for key, value in cid.items():
                 print(f"  {key}: {value}")
         health = snapshot.get("health") or {}
@@ -2939,6 +2948,10 @@ def health(
             print("Health:")
             for key, value in health.items():
                 print(f"  {key}: {value}")
+        else:
+            # Say so plainly. This used to print invented numbers instead.
+            print("Health: no data available from this device.")
+        _print_health_sources(snapshot.get("sources", {}))
         details = snapshot.get("details", {})
         _print_sdmon_details(details)
 
@@ -2964,15 +2977,35 @@ def health(
         raise SystemExit(get_exit_code("INTERNAL_ERROR"))
 
 
+def _print_health_sources(sources: dict[str, Any]) -> None:
+    """List which health sources answered, and why the others did not.
+
+    Health readings used to be fabricated, so an absent source looked the same
+    as a working one. Naming each source makes the gap visible.
+    """
+
+    if not sources:
+        return
+    print("Sources:")
+    for name, status in sources.items():
+        if not isinstance(status, dict):
+            continue
+        if status.get("available"):
+            print(f"  {name}: ok")
+        else:
+            reason = status.get("reason") or status.get("error_code") or "unavailable"
+            print(f"  {name}: unavailable — {reason}")
+
+
 def _print_sdmon_details(details: dict[str, object]) -> None:
-    if details.get("sdmon_available"):
-        sdmon_health = cast(dict[str, object], details.get("sdmon_health", {}))
-        if sdmon_health:
-            print("Industrial health (sdmon):")
-            for key, value in sdmon_health.items():
-                print(f"  {key}: {value}")
-    elif details.get("sdmon_error"):
-        print(f"sdmon error: {details.get('sdmon_error')}")
+    version = details.get("sdmon_version")
+    if version:
+        print(f"sdmon version: {version}")
+    if details.get("identity_is_reader_not_card"):
+        print(
+            "Note: the identity above belongs to the USB reader, not the card. "
+            "Attach the card to an MMC host controller to read its CID."
+        )
 
 
 @app.command(name="capabilities")
