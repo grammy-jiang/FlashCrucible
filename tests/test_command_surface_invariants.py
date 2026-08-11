@@ -10,7 +10,8 @@ mechanically instead, so a new command cannot quietly skip them:
 2. anything taking `--device` previews with `--dry-run` and returns before
    doing any work, on the same terms;
 3. no engine reports a status the pipeline vocabulary would not recognise;
-4. `describe` agrees with the code about which commands are destructive.
+4. `describe` agrees with the code about which commands are destructive;
+5. `endurance`'s safety exemptions expire the moment its engine stops refusing.
 
 Everything is derived from the live Typer registry, never from a list kept
 here: the commands, their options, and the engines the pipeline actually calls.
@@ -28,13 +29,17 @@ from __future__ import annotations
 import ast
 import inspect
 import textwrap
+from datetime import datetime, timezone
 from typing import Callable, NamedTuple
+from unittest.mock import patch
 
 import pytest
 from typer.testing import CliRunner
 
 from tfqa.cli.main import _TOOL_REQUIREMENTS, _collect_command_map, app
-from tfqa.core.models import CLIResponse
+from tfqa.core.errors import NotImplementedEngineError
+from tfqa.core.models import CLIResponse, DeviceInfo, EnduranceConfig, RunContext
+from tfqa.tests.endurance import simple as endurance_simple
 from tfqa.orchestration import pipeline as pipeline_mod
 from tfqa.orchestration.pipeline import _STATUS_SYNONYMS, _VALID_STATUSES
 
@@ -350,3 +355,132 @@ class TestDescribeAgreesWithTheCode:
 
     def test_every_command_carries_the_key(self) -> None:
         assert _describe("detect")["destructive_when"] is None
+
+
+def _engine_refuses() -> bool:
+    """Whether the endurance engine still declines to do any device I/O.
+
+    Read out of the source, not by calling it. Once the engine is implemented,
+    invoking it to compute a boolean would mean a test run writing to a device
+    -- `EnduranceConfig` defaults to five passes -- so the check has to be
+    structural. `_dry_run_branch_returns` above reads the tree for the same
+    reason.
+    """
+
+    tree = ast.parse(
+        textwrap.dedent(inspect.getsource(endurance_simple.run_simple_endurance))
+    )
+    return any(
+        isinstance(node, ast.Raise)
+        and isinstance(node.exc, ast.Call)
+        and isinstance(node.exc.func, ast.Name)
+        and node.exc.func.id == "NotImplementedEngineError"
+        for node in ast.walk(tree)
+    )
+
+
+class TestEnduranceExemptionExpires:
+    """`endurance` is exempt only while it cannot write. Both ways.
+
+    Four separate places assert the command is safe, and every one of them is
+    conditional on the engine being unimplemented: the `describe` metadata, the
+    absent `_assert_device_safe` call, the `check_safety=False` plan, and the
+    `GUARD_EXEMPT` entry below. Nothing else makes them change together, so an
+    implementer could add the engine, leave all four untouched, and ship a
+    destructive command that reports itself as read-only -- to `describe`, and
+    therefore to the generated MCP tool descriptions.
+
+    Every assertion here is written in both directions. A one-directional check
+    would let the exemptions be removed early, leaving `endurance` answering
+    DEVICE_UNSAFE on a mounted card instead of the NOT_IMPLEMENTED that
+    actually explains the situation.
+    """
+
+    WIRING = (
+        "`_DESCRIBE_OVERRIDES['endurance']` -> destructive=True, "
+        "destructive_when, requires_root=True; call `_assert_device_safe` "
+        "before any I/O; pass `check_safety=True` to `_emit_dry_run`; and "
+        "delete the `GUARD_EXEMPT['endurance']` entry."
+    )
+
+    @property
+    def _command(self) -> Command:
+        (found,) = [c for c in ALL_COMMANDS if c.name == "endurance"]
+        return found
+
+    def test_the_refusal_is_real_while_it_refuses(self) -> None:
+        """The source says it refuses; confirm the behaviour agrees.
+
+        Only while it refuses -- once implemented, calling it would write to a
+        device. `NotImplementedEngineError` is the only exception accepted: a
+        validation or setup regression must surface as itself rather than be
+        read as "implemented" and answered with four unrelated rewires.
+        """
+
+        if not _engine_refuses():
+            pytest.skip("implemented; calling it would write to the device")
+
+        context = RunContext(
+            run_id="tripwire",
+            started_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            device=DeviceInfo(
+                path="/dev/null",
+                name="null",
+                size_bytes=0,
+                is_removable=True,
+                is_system_disk=False,
+                mountpoints=[],
+                transport="usb",
+            ),
+        )
+        with pytest.raises(NotImplementedEngineError):
+            endurance_simple.run_simple_endurance(context, EnduranceConfig())
+
+    def test_the_guard_is_called_exactly_when_the_engine_can_write(self) -> None:
+        assert self._command.calls_guard is not _engine_refuses(), (
+            f"endurance {'refuses' if _engine_refuses() else 'runs'} but "
+            f"{'calls' if self._command.calls_guard else 'does not call'} "
+            f"_assert_device_safe. To implement it, wire all four: {self.WIRING}"
+        )
+
+    def test_describe_claims_destructive_exactly_when_it_can_write(self) -> None:
+        # `describe` is what agents read, and the MCP tool descriptions are
+        # generated from it, so a stale False here is repeated everywhere.
+        assert bool(_describe("endurance")["destructive"]) is not _engine_refuses(), (
+            f"describe says destructive={_describe('endurance')['destructive']} "
+            f"while the engine "
+            f"{'refuses' if _engine_refuses() else 'writes'}. {self.WIRING}"
+        )
+
+    def test_the_plan_previews_safety_exactly_when_it_can_write(self) -> None:
+        # Behavioural, not structural: the plan a caller actually receives is
+        # what has to carry the verdict.
+        device = DeviceInfo(
+            path="/dev/sdz",
+            name="sdz",
+            size_bytes=64 * 1024**3,
+            is_removable=True,
+            is_system_disk=False,
+            mountpoints=[],
+            transport="usb",
+        )
+        with patch("tfqa.core.devices.get_device", return_value=device):
+            result = _runner.invoke(
+                app,
+                ["--dry-run", "endurance", "--device", device.path, "--output", "json"],
+            )
+        assert result.exit_code == 0, result.stdout
+        plan = CLIResponse.model_validate_json(result.stdout).data["plan"]
+
+        assert ("safety" in plan) is not _engine_refuses(), (
+            f"the dry-run plan {'omits' if 'safety' not in plan else 'includes'} "
+            f"a safety verdict while the engine "
+            f"{'refuses' if _engine_refuses() else 'writes'}. {self.WIRING}"
+        )
+
+    def test_the_exemption_and_the_refusal_agree(self) -> None:
+        # The single check the other three exist to make specific.
+        assert ("endurance" in GUARD_EXEMPT) is _engine_refuses(), (
+            "endurance is exempt from the safety guard only while its engine "
+            f"refuses to do device I/O. {self.WIRING}"
+        )

@@ -110,6 +110,20 @@ MUTANTS: dict[str, Mutant] = {
         guarded_by=("tests/test_engines_do_not_invent.py",),
         consequence="An unimplemented engine reports a measurement it never took.",
     ),
+    "endurance-implemented-without-the-guard": Mutant(
+        # Same target as above, different guard: that one proves the engine
+        # does not invent numbers, this one proves that implementing it cannot
+        # leave the safety exemptions behind.
+        target="tfqa.tests.endurance.simple.run_simple_endurance",
+        replacement=lambda ctx, config: {"name": "endurance.simple", "status": "ok"},
+        guarded_by=(
+            "tests/test_command_surface_invariants.py::TestEnduranceExemptionExpires",
+        ),
+        consequence=(
+            "A destructive command ships with no safety guard, no confirmation "
+            "requirement, and a describe payload calling itself read-only."
+        ),
+    ),
 }
 
 
