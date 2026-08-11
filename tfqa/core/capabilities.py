@@ -20,6 +20,7 @@ from typing import Dict, Optional
 import platform
 
 from tfqa.core.models import ToolCapability, Capabilities
+from tfqa import __version__
 
 
 # Every external binary a command declares in `describe`. If `describe` names a
@@ -93,7 +94,7 @@ def probe_capabilities(tool_names: list[str] | None = None) -> Capabilities:
         external_tools[name] = cap
 
     caps = Capabilities(
-        version="0.1.0",
+        version=__version__,
         platform=f"{platform.system()} {platform.machine()}",
         external_tools=dict(external_tools.items()),
         features={},

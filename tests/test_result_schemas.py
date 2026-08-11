@@ -99,13 +99,16 @@ class TestSchemasAreDeclared:
 
     def test_only_command_groups_lack_a_schema(self) -> None:
         # `config` is a Typer group with no callback of its own; its
-        # subcommands have their own schemas. Everything else must have one.
+        # subcommands have their own schemas. `mcp-server` speaks JSON-RPC on
+        # stdout for its whole lifetime and never emits a CLIResponse, so a
+        # result schema for it would describe nothing. Everything else must
+        # have one.
         without = {
             command
             for command in _collect_command_map()
             if _result_schema_name(command) is None
         }
-        assert without == {"config"}, (
+        assert without == {"config", "mcp-server"}, (
             f"commands with no result schema: {sorted(without)}"
         )
 

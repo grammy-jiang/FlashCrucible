@@ -229,6 +229,13 @@ def _describe_click_param(param: click.Parameter) -> dict[str, Any]:
     type_name = getattr(param_type, "name", None) if param_type else None
     if isinstance(param, click.Option):
         descriptor["flags"] = list(getattr(param, "opts", []))
+        # A paired flag such as `--verify/--no-verify` keeps its off switch in
+        # `secondary_opts`. Without it a caller reading this metadata has no
+        # way to turn off an option that defaults to on, and would reasonably
+        # conclude omission does it -- which leaves the default in force.
+        secondary = list(getattr(param, "secondary_opts", []) or [])
+        if secondary:
+            descriptor["secondary_flags"] = secondary
         descriptor["type"] = type_name or "string"
         choices = getattr(param_type, "choices", None)
         if choices:
@@ -3510,6 +3517,26 @@ def cancel_command(
         )
         print(resp.model_dump_json())
         raise SystemExit(get_exit_code(e.error_code))
+
+
+@app.command(name="mcp-server")
+def mcp_server(ctx: typer.Context) -> None:
+    """Serve the commands as MCP tools over stdio.
+
+    Agents otherwise shell out and parse stdout. Each tool runs the real CLI as
+    a subprocess, so the safety guard and the JSON envelope come from the one
+    implementation that is already tested; the destructive tools refuse without
+    both `force` and `yes` exactly as they do on the command line.
+    """
+
+    # Imported here: the MCP layer reads the describe registry, which lives in
+    # this module, so a top-level import would be circular.
+    from tfqa.mcp.server import serve
+
+    try:
+        serve()
+    except KeyboardInterrupt:  # pragma: no cover - interactive shutdown
+        pass
 
 
 @app.command(name="capabilities")

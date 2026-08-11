@@ -89,6 +89,25 @@ class ConfigOverrides(TestCase):
         self.assertEqual(paths.schemas_dir(), paths.DEFAULT_SCHEMAS_DIR)
 
 
+class ShippedPackages(TestCase):
+    def test_every_subpackage_is_a_regular_package(self):
+        # `packages.find` currently ships namespace directories too, so this is
+        # not load-bearing today -- but it becomes so the moment anyone sets
+        # `namespaces = false`, and the failure is silent: the module imports
+        # from a source tree and is simply absent from the wheel. One outlier
+        # (`tfqa/tests/performance`) already existed when this was written.
+        missing = [
+            str(directory.relative_to(PACKAGE_ROOT))
+            for directory in PACKAGE_ROOT.rglob("*")
+            if directory.is_dir()
+            and directory.name not in {"__pycache__", "data"}
+            and "data" not in directory.relative_to(PACKAGE_ROOT).parts
+            and any(child.suffix == ".py" for child in directory.iterdir())
+            and not (directory / "__init__.py").is_file()
+        ]
+        self.assertEqual(missing, [], f"not shipped in the wheel: {missing}")
+
+
 class DeclaredDependencies(TestCase):
     def _declared(self) -> set[str]:
         requirements = metadata.requires("flashcrucible") or []
