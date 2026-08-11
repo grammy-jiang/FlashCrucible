@@ -50,7 +50,7 @@ commands and read the same results.
 | `full-capacity-test` | Destructive full-span write + verify, detects wrapping fakes | **Yes** |
 | `surface-scan` | Bad-block sweep via `badblocks` (required) | Only `--mode destructive` |
 | `performance` | Throughput / latency / IOPS via `fio` (required) | **Yes** |
-| `endurance` | Burn-in loop — **not implemented**, refuses to run | — |
+| `endurance` | Burn-in: repeated write+verify passes, reports how the card degrades | **Yes** |
 | `workload-smallfiles` | Small-file create/read/delete metadata stress | **Yes** |
 | `image-flash` | Write an image with `dd`, verify with `cmp` | **Yes** |
 | `filesystem-check` | Run `fsck` against the filesystem | Only with `--force` |
@@ -189,6 +189,27 @@ uv run tfqa status                    # every recent run
 uv run tfqa cancel 20260811T093157Z-3f9c1a20
 ```
 
+`endurance` takes the same flags, and needs them more: it rewrites the tested span once per pass —
+the whole device by default, or whatever `--limit-bytes` bounds it to.
+
+```bash
+uv run tfqa endurance --device /dev/sdX --passes 20 --detach
+uv run tfqa endurance --device /dev/sdX --limit-bytes $((8 * 1024**3)) --passes 50
+```
+
+No override flags: an unmounted, non-system card needs none. `--force --yes` is for the case where
+the guard has refused and you are certain it is the right device — see [Safety](#safety).
+
+`--passes` counts write+verify cycles over that span. `--duration` does **not** cut a pass short:
+it is checked only between passes, so it stops another one starting rather than stopping the run
+at that moment, and at least one pass always completes. On a large card a single pass can be
+hours, so a short duration does not bound the run — `--limit-bytes` does.
+
+The run stops early if the card starts refusing writes, or if a block comes back holding data
+written for a different offset. That is a wrapping counterfeit rather than wear, and hammering it
+further learns nothing. An ordinary read mismatch is counted and the run continues, because the
+trend across passes is the measurement.
+
 The run records phase, byte progress, and its outcome to a state file beside its JSONL log, so
 `status` works from any process and a crashed run still leaves something readable. A run whose
 process has vanished without recording an outcome is reported as `orphaned` rather than showing
@@ -248,8 +269,8 @@ validates against the tool contract is the same result the CLI promises.
 
 The tools run the real CLI as a subprocess, which is the point — the safety guard, the exit codes,
 and the envelope have one implementation rather than two. A destructive tool over MCP is exactly as
-hard to fire as the same command in a shell: it refuses without both `force` and `yes`, and the
-server never supplies either on the caller's behalf. Destructive tools carry `destructiveHint` and
+hard to fire as the same command in a shell: an unsafe device is refused unless the call carries
+both `force` and `yes`, and the server never supplies either on the caller's behalf. Destructive tools carry `destructiveHint` and
 say so in their description.
 
 Long runs should pass `detach` and be polled with the `status` tool. A blocking call is bounded by
@@ -337,11 +358,12 @@ in for block devices. `make test-hermetic` runs it again with every external bin
 
 Honest list of what is constrained. Contributions welcome.
 
-1. **`endurance` is not implemented.** It performed no device I/O and reported invented figures,
-   so it now refuses with `NOT_IMPLEMENTED` rather than lying. Use `quick-test` or
-   `full-capacity-test` for real measurements. Implementing it properly makes it a genuinely
-   long-running command, which needs
-   [#17](https://github.com/grammy-jiang/FlashCrucible/issues/17) first.
+1. **No card has a lifetime estimate.** `endurance` measures how a card degrades over repeated
+   rewrites — throughput per pass, mismatches per pass, where writes stopped being accepted — but
+   it will not turn that into "months remaining" or a health score. Wear counters come from eMMC
+   `EXT_CSD` or `sdmon`, and when neither answers the result says so with the reason rather than
+   estimating. An earlier version did estimate, and reported "58 TB written, 0 errors" against a
+   device path that did not exist.
 2. **Some commands need their tool present.** `performance` requires `fio` and `surface-scan`
    requires `badblocks`; without them they report the tool as missing instead of estimating.
    `surface-scan` reports the bad-block count badblocks actually found, and no latency figure,

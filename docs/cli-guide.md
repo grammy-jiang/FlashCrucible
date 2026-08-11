@@ -104,7 +104,7 @@ uv run tfqa capabilities --output json
 uv run tfqa describe quick-test --output json
 uv run tfqa config show --output json
 uv run tfqa config validate --output json
-uv run tfqa endurance --device /dev/fake --output json
+uv run tfqa describe endurance --output json
 ```
 
 ## CLI tests and mocking
@@ -305,11 +305,23 @@ types and booleans are stable.
 ```bash
 uv run tfqa profiles
 uv run tfqa profiles --name camera-logger --output json
-uv run tfqa endurance --device /dev/sdX --profile camera-logger
+uv run tfqa endurance --device /dev/sdX --profile camera-logger --detach
 ```
 
 Filtering by `--name` lets automation verify a profile before invoking a destructive endurance
-loop. Use `tfqa describe-schemas --schema cli_response.schema.json --output json` to see the
+loop — and it is worth doing, because the loop overwrites the tested span once per pass. That is
+the whole device unless `--limit-bytes` narrows it.
+
+An unmounted, non-system card needs no override flags. `--force --yes` exist to override a guard
+*refusal*, so passing them by habit is how a mistyped path to a mounted card or a system disk gets
+overwritten instead of refused.
+
+`write_pattern` is honoured, not merely recorded: `sequential` writes the blocks in order and
+`random` shuffles them with a seed derived from `--seed`, so the run stays reproducible. Anything
+else is rejected, because reporting a workload the engine did not run makes two profiles look
+comparable when they are not.
+
+Use `tfqa describe-schemas --schema cli_response.schema.json --output json` to see the
 envelope that wraps the `profiles` response.
 
 ## History, trends, and reports

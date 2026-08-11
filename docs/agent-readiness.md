@@ -177,9 +177,14 @@ aggregates, while any marker sat in `details`, which it never reads. `endurance`
 it did no device I/O whatsoever and reported "58 TB written, 0 errors" against a device path that
 did not exist.
 
-Engines now refuse: `ToolNotFoundError` propagates from `performance` and `surface-scan`, and
-`endurance` raises `NotImplementedEngineError`. Pipelines record an unavailable stage as
-`skipped`, so it contributes no metrics and does not fail the run.
+Engines now refuse: `ToolNotFoundError` propagates from `performance` and `surface-scan`.
+Pipelines record an unavailable stage as `skipped`, so it contributes no metrics and does not fail
+the run.
+
+`endurance` refused outright until it could measure for real, which it now does
+([#32](https://github.com/grammy-jiang/FlashCrucible/issues/32)) — writing and verifying the
+tested span once per pass, which `--limit-bytes` can narrow, and reporting how the numbers move. What it still will not do is estimate: no
+lifetime, no TBW remaining, no health score, and wear only when the card's own registers answer.
 
 The lesson is recorded here because it recurred: this was the *same* defect removed from the
 health readers in #8, surviving in modules that work never touched. A claim about the codebase is

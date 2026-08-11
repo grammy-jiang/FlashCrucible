@@ -43,9 +43,13 @@ Practical form: raise a typed error from the reader, and let the caller record `
 with a reason. See `tfqa/tests/health/snapshot.py` for the shape to copy.
 
 An engine that cannot do real work must say so rather than estimate: `performance` and
-`surface-scan` let `ToolNotFoundError` propagate when their tool is missing, and `endurance`
-raises `NotImplementedEngineError` because it does no device I/O at all. Callers decide what to do
-— a `pipeline` records the stage as `skipped` rather than failing the run.
+`surface-scan` let `ToolNotFoundError` propagate when their tool is missing. Callers decide what
+to do — a `pipeline` records the stage as `skipped` rather than failing the run.
+
+The same rule binds an engine that *can* run. `endurance` measures throughput, mismatches and
+bytes written, and reports wear only when `EXT_CSD` or `sdmon` answers — with the reason when
+neither does. It will not produce a lifetime estimate or a health score from a handful of passes,
+and it refuses a write pattern it cannot actually perform rather than echoing the request back.
 
 ### 2. Never swallow an error
 
