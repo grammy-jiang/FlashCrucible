@@ -21,22 +21,40 @@ Details that matter for correctness:
 * A block is only called "wrapped" when it exactly matches the pattern written
   for another offset. A header that merely decodes to a plausible integer is
   not enough: a bad sector returning zeros decodes as offset 0.
+
+The block pattern, the offset decoder and the cache-dropping flush live in
+`tfqa.core.blockio`, because the endurance engine writes and verifies with the
+identical format and a second copy would drift.
 """
 
 from __future__ import annotations
 
-import hashlib
 import os
-import struct
 import time
 from typing import Any, Callable, Literal, TypedDict, cast
 
+from tfqa.core.blockio import (
+    HEADER,
+    block_pattern,
+    decode_offset,
+    flush_and_drop_cache,
+)
 from tfqa.core.errors import ArgumentError, RuntimeIOError
 from tfqa.core.models import DeviceInfo
 
+#: Re-exported so callers and tests can reach them from the engine they belong
+#: to; the definitions live in `tfqa.core.blockio` because the endurance engine
+#: needs the identical header format.
+__all__ = [
+    "HEADER",
+    "block_pattern",
+    "decode_offset",
+    "flush_and_drop_cache",
+    "run_full_capacity",
+    "validate_options",
+]
+
 DEFAULT_BLOCK_SIZE = 1024 * 1024
-_HEADER = struct.Struct("<QQ")  # offset, seed
-_DIGEST_SIZE = 32
 
 #: (bytes done in this pass, bytes in a pass, pass name). The pass name lets a
 #: caller account for write and verify separately; reporting both as one span
@@ -61,74 +79,6 @@ class FullCapacityResult(TypedDict):
     details: dict[str, object]
 
 
-def block_pattern(offset: int, size: int, seed: int) -> bytes:
-    """Return the deterministic content a block at `offset` must hold.
-
-    The offset is encoded in the header so a mismatch can say where the data
-    that came back actually belongs, which is what exposes a wrapping card.
-    """
-
-    if size < _HEADER.size:
-        raise ArgumentError(
-            message=(
-                f"Block size must be at least {_HEADER.size} bytes to carry the "
-                "offset header"
-            ),
-            details={"size": size, "minimum": _HEADER.size},
-        )
-    header = _HEADER.pack(offset, seed)
-    body = hashlib.blake2b(header, digest_size=_DIGEST_SIZE).digest()
-    filler = body * ((size - len(header)) // _DIGEST_SIZE + 1)
-    return header + filler[: size - len(header)]
-
-
-def _decode_offset(block: bytes, span: int | None = None) -> int | None:
-    """Recover the offset a block claims to hold, if it looks like one.
-
-    Corrupt data decodes to arbitrary integers -- all-0xFF bytes yield
-    2**64-1 -- so a value outside the tested span is rejected rather than
-    reported as though the device had returned a real block from elsewhere.
-    """
-
-    if len(block) < _HEADER.size:
-        return None
-    try:
-        offset, _seed = _HEADER.unpack(block[: _HEADER.size])
-    except struct.error:  # pragma: no cover - guard
-        return None
-    offset = int(offset)
-    if span is not None and offset >= span:
-        return None
-    return offset
-
-
-def _flush_and_drop_cache(fd: int) -> str | None:
-    """Commit the writes and ask the kernel to forget the pages.
-
-    Returns a description of an fsync failure, or None. The flush is where a
-    device reports the media errors that buffered writes hid, so swallowing it
-    would let dirty pages satisfy the verify reads and the test pass even though
-    nothing reached the card.
-
-    Dropping the cache matters for the same reason: without it the verify pass
-    reads back from RAM and a counterfeit passes cleanly.
-    """
-
-    error: str | None = None
-    try:
-        os.fsync(fd)
-    except OSError as exc:
-        error = f"fsync failed: {exc.strerror or exc}"
-    fadvise = getattr(os, "posix_fadvise", None)
-    if fadvise is None:  # pragma: no cover - platform guard
-        return error
-    try:
-        fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
-    except OSError:  # pragma: no cover - advisory only
-        pass
-    return error
-
-
 def _write_pass(
     path: str,
     span: int,
@@ -144,7 +94,7 @@ def _write_pass(
     try:
         while written < span:
             size = min(block_size, span - written)
-            if size < _HEADER.size:
+            if size < HEADER.size:
                 # A tail too small to carry the offset header cannot be
                 # verified; stop rather than write something uncheckable.
                 break
@@ -161,7 +111,7 @@ def _write_pass(
             written += size
             if progress:
                 progress(written, span, "write")
-        flush_error = _flush_and_drop_cache(fd)
+        flush_error = flush_and_drop_cache(fd)
         if flush_error:
             issues.append(
                 f"{flush_error} after {written} bytes; the device did not "
@@ -190,7 +140,7 @@ def _verify_pass(
         offset = 0
         while offset < span:
             size = min(block_size, span - offset)
-            if size < _HEADER.size:
+            if size < HEADER.size:
                 break
             try:
                 actual = os.read(fd, size)
@@ -204,7 +154,7 @@ def _verify_pass(
                 break
             if actual != block_pattern(offset, size, seed):
                 if len(mismatches) < max_mismatches:
-                    found = _decode_offset(actual, span)
+                    found = decode_offset(actual, span)
                     # A plausible integer in the header is not enough: a bad
                     # sector returning zeros decodes as offset 0. Only call it a
                     # wrap when the whole block is exactly what was written for
@@ -242,13 +192,13 @@ def validate_options(block_size: int, limit_bytes: int | None) -> None:
     falling through to a device-shaped error about capacity.
     """
 
-    if block_size < _HEADER.size:
+    if block_size < HEADER.size:
         raise ArgumentError(
             message=(
-                f"Block size must be at least {_HEADER.size} bytes, the size of "
+                f"Block size must be at least {HEADER.size} bytes, the size of "
                 "the offset header each block carries"
             ),
-            details={"block_size": block_size, "minimum": _HEADER.size},
+            details={"block_size": block_size, "minimum": HEADER.size},
         )
     if limit_bytes is not None and limit_bytes <= 0:
         raise ArgumentError(
