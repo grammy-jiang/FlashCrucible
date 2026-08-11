@@ -36,52 +36,6 @@ SurfaceMode = Literal["readonly", "destructive"]
 _LOGGER = logging.getLogger(__name__)
 
 
-def _simulate_surface_scan(
-    device: DeviceInfo,
-    *,
-    pass_count: int,
-    duration_seconds: float,
-    mode: SurfaceMode,
-) -> SurfaceScanResult:
-    base_coverage = 75.0 if device.is_removable else 85.0
-    size_factor = min(25.0, device.size_bytes / (128 * 1024**3) * 5)
-    coverage = min(100.0, base_coverage + size_factor)
-    latency = 2.0 + (0.5 if device.transport == "usb" else 0.0)
-
-    metrics = SurfaceScanMetrics(
-        pass_count=pass_count,
-        coverage_percent=round(coverage, 2),
-        read_errors=0 if mode == "readonly" else 1,
-        duration_seconds=duration_seconds,
-        average_latency_ms=round(latency, 3),
-    )
-
-    details: dict[str, object] = {
-        "mode": mode,
-        "pass_stats": [
-            {
-                "pass": idx + 1,
-                "coverage_percent": metrics.coverage_percent,
-                "read_errors": metrics.read_errors,
-            }
-            for idx in range(pass_count)
-        ],
-        "read_only": mode == "readonly",
-        "scanned_at": device.path,
-        "tool": "simulated",
-    }
-    health_data = _collect_health_snapshot(device)
-    if health_data:
-        details["health_snapshot"] = health_data
-
-    return {
-        "status": "ok",
-        "metrics": asdict(metrics),
-        "device": {"path": device.path},
-        "details": details,
-    }
-
-
 def _collect_health_snapshot(device: DeviceInfo) -> HealthSnapshot | None:
     try:
         return health_snapshot.run_health_snapshot(device)
@@ -152,9 +106,10 @@ def run_surface_scan(
             "details": details,
         }
     except ToolNotFoundError:
-        return _simulate_surface_scan(
-            device,
-            pass_count=pass_count,
-            duration_seconds=duration_seconds,
-            mode=mode,
-        )
+        # Deliberately not caught. The former `_simulate_surface_scan` returned a
+        # coverage percentage derived from device size and a read-error count of
+        # `0 if readonly else 1` -- a defect count for a physical surface check
+        # that never touched the card. Both went into `metrics`, which `trends`
+        # aggregates, while the `tool: "simulated"` marker sat in `details`,
+        # which it does not.
+        raise

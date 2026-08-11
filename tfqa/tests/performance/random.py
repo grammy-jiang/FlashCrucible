@@ -1,4 +1,4 @@
-"""Simulated random I/O performance runner for Phase 2 benchmarks."""
+"""Random I/O performance runner, measured with fio."""
 
 from __future__ import annotations
 
@@ -33,36 +33,8 @@ class RandomPerformanceResult(TypedDict):
     details: dict[str, object]
 
 
-def _parse_block_size(size: str) -> int:
-    normalized = size.strip().lower()
-    multiplier = 1
-    if normalized.endswith("k"):
-        multiplier = 1024
-        normalized = normalized[:-1]
-    elif normalized.endswith("m"):
-        multiplier = 1024 * 1024
-        normalized = normalized[:-1]
-    elif normalized.endswith("g"):
-        multiplier = 1024 * 1024 * 1024
-        normalized = normalized[:-1]
-
-    if not normalized:
-        return 4096
-
-    try:
-        value = int(normalized)
-    except ValueError:
-        return 4096
-
-    return max(1, value * multiplier)
-
-
 def _clamp_percentage(value: int) -> int:
     return max(0, min(100, value))
-
-
-def _compute_base_throughput(device: DeviceInfo) -> float:
-    return 120.0 if device.is_removable else 220.0
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -85,9 +57,13 @@ def run_random_performance(
     rw_mix: str = "randrw",
     random_read_percentage: int = 50,
 ) -> RandomPerformanceResult:
-    """Simulate random I/O performance metrics."""
+    """Measure random I/O performance with fio.
 
-    block_bytes = _parse_block_size(block_size)
+    Raises ToolNotFoundError when fio is absent. There is no estimate: the
+    former fallback computed throughput from block size and queue depth and
+    reported it as a measurement.
+    """
+
     read_percentage = _clamp_percentage(random_read_percentage)
     try:
         extra_args = ["--rwmixread", str(read_percentage)]
@@ -122,38 +98,10 @@ def run_random_performance(
             random_read_percentage=read_percentage,
         )
     except ToolNotFoundError:
-        _LOGGER.debug("fio unavailable, falling back to simulated random metrics")
-        base = _compute_base_throughput(device)
-        depth_factor = min(2.0, max(0.5, io_depth / 32))
-        block_factor = max(0.5, 4096 / block_bytes)
-
-        read_mbps = round(
-            base * depth_factor * block_factor * (read_percentage / 100), 2
-        )
-        write_mbps = round(
-            base * depth_factor * block_factor * ((100 - read_percentage) / 100), 2
-        )
-
-        metrics = RandomPerformanceMetrics(
-            random_read_mbps=read_mbps,
-            random_write_mbps=write_mbps,
-            io_depth=io_depth,
-            duration_seconds=duration_seconds,
-            block_size=block_size,
-            rw_mix=rw_mix,
-            random_read_percentage=read_percentage,
-        )
-        details = {
-            "sampling": "random",
-            "block_size": block_size,
-            "rw_mix": rw_mix,
-            "duration_seconds": duration_seconds,
-            "mode": "simulated",
-            "reason": "fio missing",
-        }
-        health_data = _collect_health_snapshot(device)
-        if health_data:
-            details["health_snapshot"] = health_data
+        # Deliberately not caught -- see the note in basic.py. This branch used
+        # to compute a throughput figure from block size and queue depth and
+        # report it as a measurement.
+        raise
 
     result: RandomPerformanceResult = {
         "status": "ok",

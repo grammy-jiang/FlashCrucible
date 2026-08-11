@@ -1,18 +1,24 @@
-"""Simple endurance/burn-in engine for FlashCrucible."""
+"""Endurance/burn-in engine for FlashCrucible.
+
+Not implemented. The previous version performed no device I/O at all: it
+computed throughput from `is_removable`, derived bytes written from that, and
+generated an error count as `pass_index // 2`. Run against a device path that
+did not exist it returned "58 TB written, 0 errors" in under a millisecond, and
+those figures went into the run history where `trends` aggregates them.
+
+Rather than keep inventing them, the engine refuses. Implementing it for real
+means writing to the device across many passes, which makes it a genuinely
+long-running command -- see the tracking issues on the repository.
+"""
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any
 
-from tfqa.core.errors import ArgumentError
-from tfqa.core.logging import emit_event
+from tfqa.core.errors import ArgumentError, NotImplementedEngineError
 from tfqa.core.models import (
-    DeviceInfo,
     EnduranceConfig,
     RunContext,
     TestResult,
-    TestStatus,
 )
 
 
@@ -38,86 +44,22 @@ def validate_config(config: EnduranceConfig) -> None:
 
 
 def run_simple_endurance(ctx: RunContext, config: EnduranceConfig) -> TestResult:
-    """Run a simple endurance simulation and emit structured metrics."""
+    """Refuse to run: this engine cannot measure anything yet.
+
+    Arguments are still validated first, so a caller learns about a bad
+    `--duration` or `--passes` rather than being told only that the engine is
+    missing.
+    """
 
     validate_config(config)
 
-    pass_history: list[dict[str, Any]] = []
-    total_bytes = 0
-    total_errors = 0
-    throughput_sum = 0.0
-    last_log_path = None
-
-    for pass_index in range(1, config.pass_count + 1):
-        throughput = _calculate_throughput(ctx.device, pass_index)
-        bytes_written = int(throughput * 1_000_000 / 8 * config.duration_seconds)
-        errors = _calculate_errors(ctx.device, config.force, pass_index)
-
-        total_bytes += bytes_written
-        total_errors += errors
-        throughput_sum += throughput
-
-        entry: dict[str, Any] = {
-            "pass_index": pass_index,
-            "throughput_mbps": round(throughput, 3),
-            "bytes_written": bytes_written,
-            "errors": errors,
-        }
-        pass_history.append(entry)
-
-        last_log_path = emit_event(
-            ctx.run_id,
-            {
-                "phase": "endurance",
-                "device_path": ctx.device.path,
-                "pass_index": pass_index,
-                "pass_metrics": entry,
-                "duration_seconds": config.duration_seconds,
-                "write_pattern": config.write_pattern,
-                "force": config.force,
-            },
-            log_dir=ctx.log_dir,
-        )
-
-    finished_at = datetime.now(timezone.utc)
-    status: TestStatus = "warning" if total_errors else "ok"
-    average_throughput = throughput_sum / config.pass_count
-    metrics: dict[str, float | int] = {
-        "total_bytes_written": total_bytes,
-        "total_errors": total_errors,
-        "average_throughput_mbps": round(average_throughput, 3),
-        "duration_seconds": config.duration_seconds * config.pass_count,
-    }
-    warnings: list[str] = []
-    if total_errors:
-        warnings.append("Errors were observed during endurance passes.")
-
-    return TestResult(
-        name="endurance.simple",
-        status=status,
-        started_at=ctx.started_at,
-        finished_at=finished_at,
-        duration_seconds=config.duration_seconds * config.pass_count,
-        metrics=metrics,
-        details={
-            "pass_count": config.pass_count,
-            "duration_seconds": config.duration_seconds,
-            "write_pattern": config.write_pattern,
-            "force": config.force,
-            "pass_history": pass_history,
+    raise NotImplementedEngineError(
+        "endurance",
+        "the engine performs no device I/O, so any metric it reported would be "
+        "invented; use quick-test or full-capacity-test for real measurements",
+        {
+            "device_path": ctx.device.path,
+            "requested_passes": config.pass_count,
+            "requested_duration_seconds": config.duration_seconds,
         },
-        warnings=warnings,
-        logs_path=last_log_path,
     )
-
-
-def _calculate_throughput(device: DeviceInfo, pass_index: int) -> float:
-    base = 150.0 if device.is_removable else 300.0
-    degradation = 0.01 * (pass_index - 1)
-    return max(base * (1.0 - degradation), 1.0)
-
-
-def _calculate_errors(device: DeviceInfo, force: bool, pass_index: int) -> int:
-    if force or device.is_removable:
-        return 0
-    return pass_index // 2

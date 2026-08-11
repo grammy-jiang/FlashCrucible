@@ -43,11 +43,10 @@ run — and those values were written into the run history and aggregated by `tf
 Practical form: raise a typed error from the reader, and let the caller record `available: false`
 with a reason. See `tfqa/tests/health/snapshot.py` for the shape to copy.
 
-**This rule is not yet true everywhere.** Both performance engines still synthesise throughput
-when `fio` is missing (`tfqa/tests/performance/basic.py:80`, `random.py:125`) and return
-`status: "ok"`. They mark it with `details["mode"] = "simulated"`, but `trends` aggregates
-`metrics`, not `details`, so the invented figures reach trend analysis unlabelled. Do not copy
-that pattern, and do not treat its presence as precedent — it is a known defect awaiting a fix.
+An engine that cannot do real work must say so rather than estimate: `performance` and
+`surface-scan` let `ToolNotFoundError` propagate when their tool is missing, and `endurance`
+raises `NotImplementedEngineError` because it does no device I/O at all. Callers decide what to do
+— a `pipeline` records the stage as `skipped` rather than failing the run.
 
 ### 2. Never swallow an error
 

@@ -1080,8 +1080,20 @@ def performance(
             )
             message = f"Sequential performance test completed for {target_device.path}"
 
+        # Reflect what the engine reported. This was hardcoded to "ok", so a
+        # failing benchmark would still have been announced as a success.
+        # Distinguish a benchmark that failed from one that errored, so a
+        # caller can tell "the card is slow" from "the run broke".
+        payload_status = payload.get("status")
+        perf_status: Literal["ok", "fail", "error"] = (
+            "ok"
+            if payload_status in (None, "ok")
+            else "fail"
+            if payload_status == "fail"
+            else "error"
+        )
         resp = CLIResponse(
-            status="ok",
+            status=perf_status,
             command=command_name,
             message=message,
             device={"path": target_device.path},
@@ -1951,10 +1963,16 @@ def endurance(
                 },
                 actual_output,
                 force=effective_force,
+                # The engine writes nothing today, so a refusal preview would
+                # describe a guard that no longer applies.
+                check_safety=False,
             )
             return
 
-        _assert_device_safe(ctx, target_device, effective_force)
+        # No _assert_device_safe here on purpose: the engine performs no device
+        # I/O, so guarding it only made a mounted card answer DEVICE_UNSAFE
+        # before the caller could learn the engine is not implemented. Restore
+        # the guard together with the writes.
 
         run_ctx = RunContext(
             run_id=run_id,
@@ -2028,18 +2046,26 @@ def endurance(
         raise SystemExit(get_exit_code("INTERNAL_ERROR"))
 
 
+# Ordered worst-last. "skipped" ranks above "ok" so a run where a stage could
+# not execute does not report as a clean pass, but below "warning" because
+# nothing actually went wrong. Omitting it raised KeyError and took the whole
+# default pipeline down with INTERNAL_ERROR.
 _STATUS_PRIORITY: dict[TestStatus, int] = {
     "ok": 0,
-    "warning": 1,
-    "failed": 2,
-    "error": 3,
+    "skipped": 1,
+    "warning": 2,
+    "failed": 3,
+    "error": 4,
 }
 
 
 def _aggregate_pipeline_status(results: list[TestResult]) -> TestStatus:
     highest: TestStatus = "ok"
     for result in results:
-        if _STATUS_PRIORITY[result.status] > _STATUS_PRIORITY[highest]:
+        # An unknown status must not silently rank as "ok"; treat it as the
+        # worst so it cannot be mistaken for a pass.
+        rank = _STATUS_PRIORITY.get(result.status, _STATUS_PRIORITY["error"])
+        if rank > _STATUS_PRIORITY[highest]:
             highest = result.status
     return highest
 
@@ -2051,6 +2077,8 @@ def _cli_status_from_pipeline_status(
         return "error"
     if status == "failed":
         return "fail"
+    # "skipped" and "warning" both exit 0: a stage that could not run is not a
+    # failure of the card. The per-stage statuses in the payload say what ran.
     return "ok"
 
 

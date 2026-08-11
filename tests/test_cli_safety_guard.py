@@ -210,18 +210,21 @@ class PerformanceGuard(SafetyGuardTestCase):
 
 
 class EnduranceGuard(SafetyGuardTestCase):
-    def test_refuses_mounted_device(self):
+    def test_is_not_guarded_while_it_writes_nothing(self):
+        # The engine performs no device I/O, so guarding it would answer
+        # DEVICE_UNSAFE on a mounted card and hide the fact that it is simply
+        # not implemented. Restore the guard together with the writes.
         with (
             patch("tfqa.core.devices.get_device", return_value=MOUNTED),
             patch("tfqa.orchestration.profile.load_profile", return_value=PROFILE),
-            patch("tfqa.tests.endurance.simple.run_simple_endurance") as run_endurance,
         ):
             result = self.runner.invoke(
                 app,
                 ["endurance", "--device", MOUNTED.path, "--output", "json"],
             )
-        self.assert_refused(result)
-        run_endurance.assert_not_called()
+        resp = CLIResponse.model_validate_json(result.stdout)
+        self.assertEqual(resp.error_code, "NOT_IMPLEMENTED")
+        self.assertNotEqual(resp.error_code, "DEVICE_UNSAFE")
 
 
 class FilesystemCheckGuard(SafetyGuardTestCase):
@@ -375,8 +378,9 @@ class PipelineGuard(SafetyGuardTestCase):
         run_pipeline.assert_called_once()
 
     def test_profile_force_is_honoured_as_override_source(self):
-        # `endurance` lets the profile supply force; the pipeline must agree.
-        # --yes is still required, so the profile alone cannot arm anything.
+        # A profile may supply force; the pipeline must honour it. --yes is
+        # still required, so the profile alone cannot arm anything. Uses
+        # quick-test because endurance no longer writes.
         forced_profile = EnduranceProfile(
             name="lab-heavy",
             description="Forced profile",
@@ -401,7 +405,7 @@ class PipelineGuard(SafetyGuardTestCase):
                     "--device",
                     MOUNTED.path,
                     "--stages",
-                    "detect,endurance",
+                    "detect,quick-test",
                     "--output",
                     "json",
                 ],
@@ -414,7 +418,7 @@ class PipelineGuard(SafetyGuardTestCase):
                     "--device",
                     MOUNTED.path,
                     "--stages",
-                    "detect,endurance",
+                    "detect,quick-test",
                     "--output",
                     "json",
                 ],
@@ -454,7 +458,6 @@ class PlanIsDestructive(TestCase):
             "quick-test",
             "full-capacity-test",
             "performance",
-            "endurance",
             "image-flash",
         ):
             with self.subTest(stage=stage):
@@ -464,7 +467,8 @@ class PlanIsDestructive(TestCase):
         # The pipeline runs surface-scan in readonly mode and fsck with
         # read_only=True, so neither writes. Only the standalone commands can,
         # and those guard themselves.
-        for stage in ("surface-scan", "filesystem-check"):
+        # `endurance` joins these while it performs no device I/O.
+        for stage in ("surface-scan", "filesystem-check", "endurance"):
             with self.subTest(stage=stage):
                 self.assertFalse(plan_is_destructive(["detect", stage]))
 

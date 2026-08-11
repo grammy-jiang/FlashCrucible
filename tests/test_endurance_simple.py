@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from tfqa.core.errors import ArgumentError
+from tfqa.core.errors import ArgumentError, NotImplementedEngineError
 from tfqa.core.models import DeviceInfo, EnduranceConfig, RunContext
 from tfqa.tests.endurance.simple import run_simple_endurance
 
@@ -37,52 +37,49 @@ def _make_context(device: DeviceInfo, run_id: str, log_dir: Path) -> RunContext:
     )
 
 
-def test_endurance_aggregates_pass_metrics(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_endurance_refuses_rather_than_inventing_metrics(tmp_path: Path) -> None:
+    """The engine does no device I/O, so it must not report having done any.
+
+    It used to compute throughput from `is_removable`, derive bytes written
+    from that, and generate errors as `pass_index // 2`. Against a device path
+    that did not exist it returned "58 TB written, 0 errors" in under a
+    millisecond, with no marker anywhere to say it was synthetic.
+    """
+
     device = _make_device("/dev/sdb")
     ctx = _make_context(device, "run-1", tmp_path)
-    config = EnduranceConfig(duration_seconds=1.0, pass_count=3, force=True)
 
-    recorded: list[dict[str, object]] = []
+    with pytest.raises(NotImplementedEngineError) as excinfo:
+        run_simple_endurance(ctx, EnduranceConfig(duration_seconds=1.0, pass_count=3))
 
-    def fake_emit(
-        run_id: str, event: dict[str, object], log_dir: Path | None = None
-    ) -> Path:
-        recorded.append(event)
-        return tmp_path / "run-1.jsonl"
-
-    monkeypatch.setattr("tfqa.tests.endurance.simple.emit_event", fake_emit)
-
-    result = run_simple_endurance(ctx, config)
-
-    assert result.status == "ok"
-    assert len(result.details["pass_history"]) == 3
-    assert result.metrics["total_errors"] == 0
-    assert recorded[-1]["pass_index"] == 3
-    assert result.logs_path == tmp_path / "run-1.jsonl"
+    assert excinfo.value.error_code == "NOT_IMPLEMENTED"
+    assert excinfo.value.details["engine"] == "endurance"
+    assert excinfo.value.details["device_path"] == "/dev/sdb"
 
 
-def test_endurance_warns_when_errors_detected(
+def test_endurance_emits_no_events(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    device = _make_device("/dev/sdc", removable=False)
+    # Nothing happened, so nothing should reach the run history.
+    device = _make_device("/dev/sdb")
     ctx = _make_context(device, "run-2", tmp_path)
-    config = EnduranceConfig(duration_seconds=0.5, pass_count=2, force=False)
+    recorded: list[object] = []
 
-    def noop_emit(*_args: object, **_kwargs: object) -> Path:
-        return tmp_path / "run-2.jsonl"
+    def spy(*args: object, **kwargs: object) -> Path:
+        recorded.append(args)
+        return tmp_path / "x.jsonl"
 
-    monkeypatch.setattr("tfqa.tests.endurance.simple.emit_event", noop_emit)
+    monkeypatch.setattr("tfqa.tests.endurance.simple.emit_event", spy, raising=False)
 
-    result = run_simple_endurance(ctx, config)
+    with pytest.raises(NotImplementedEngineError):
+        run_simple_endurance(ctx, EnduranceConfig(duration_seconds=1.0, pass_count=3))
 
-    assert result.status == "warning"
-    assert result.metrics["total_errors"] > 0
-    assert "observed" in result.warnings[0]
+    assert recorded == []
 
 
 def test_endurance_validates_inputs(tmp_path: Path) -> None:
+    """Arguments are still checked first, ahead of the not-implemented refusal."""
+
     device = _make_device("/dev/sdd")
     ctx = _make_context(device, "run-3", tmp_path)
 

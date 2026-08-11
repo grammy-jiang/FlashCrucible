@@ -40,7 +40,10 @@ class PerformanceResult(TypedDict):
 def run_seq_performance(
     device: DeviceInfo, *, duration_seconds: float = 30.0
 ) -> PerformanceResult:
-    """Simulate a sequential performance test."""
+    """Measure sequential performance with fio.
+
+    Raises ToolNotFoundError when fio is absent; there is no estimate.
+    """
 
     details: dict[str, object] = {
         "sampled_at": device.path,
@@ -77,21 +80,13 @@ def run_seq_performance(
             platform=device.transport or "unknown",
         )
     except ToolNotFoundError:
-        _LOGGER.debug("fio unavailable, falling back to simulated sequential metrics")
-        throughput = 240.0 if device.is_removable else 520.0
-        write_penalty = 0.85 if device.is_removable else 0.95
-        metrics = PerformanceMetrics(
-            sequential_read_mbps=throughput,
-            sequential_write_mbps=throughput * write_penalty,
-            io_depth=32,
-            duration_seconds=duration_seconds,
-            platform=device.transport or "unknown",
-        )
-        details["mode"] = "simulated"
-        details["reason"] = "fio missing"
-        health_data = _collect_health_snapshot(device)
-        if health_data:
-            details["health_snapshot"] = health_data
+        # Deliberately not caught. This used to return a flat 240.0 MB/s derived
+        # from `is_removable`, with a `mode: "simulated"` marker in `details` --
+        # which `trends` never reads, since it aggregates `metrics`. An
+        # unmeasured throughput figure therefore reached trend analysis
+        # indistinguishable from a real one. Refusing to answer is the honest
+        # outcome; the caller decides what to do about it.
+        raise
 
     result: PerformanceResult = {
         "status": "ok",
