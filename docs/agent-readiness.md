@@ -120,23 +120,27 @@ genuinely good baseline.
 
 ### What is missing
 
-#### E. Per-command result schemas — *the biggest real gap*
+#### E. Per-command result schemas — *done*
 
-`cli_response.schema.json` constrains the envelope but leaves `data` as a free-form object. So an
-agent can validate that a response *is* a `CLIResponse`, but **cannot validate a `quick-test`
-result**, and cannot know which keys to expect without reading the source.
+Resolved in [#16](https://github.com/grammy-jiang/FlashCrucible/issues/16). Twenty-four result
+schemas now ship alongside the envelope, `describe` carries a `result_schema` pointer, and
+`tests/test_result_schemas.py` validates the **real output of every command** against its schema
+rather than only checking that the files parse -- a schema nobody validates against drifts.
 
-What is needed:
+Each schema validates the whole `CLIResponse` and conditions the shape of `data` on `status`,
+because the payload legitimately differs between a success, a dry run, and an error. A first
+attempt constrained `data` alone with nothing required, so `{}` validated as a successful
+`quick-test` result and three schemas described a layout the commands never emitted -- the tests
+passed because the schemas asserted almost nothing.
 
-- a result schema per command, alongside the existing eight;
-- `describe <command>` gaining a `result_schema` pointer;
-- `validate-schemas` covering the new files, which it already would.
+It found a contract inconsistency immediately: `workload-smallfiles` named the target
+`device_path` in its dry-run plan while every other command used `device`, so a caller could not
+read the target out of a plan uniformly. `_emit_dry_run` now guarantees the key rather than
+relying on each command to remember it.
 
-This is what turns "parse the JSON and hope" into a contract. Note that some of it exists
-implicitly — `summary.schema.json` and `trends.schema.json` already do this for two commands, so
-the pattern is established rather than novel.
-
-*Effort: medium. Value: highest on the usage side.*
+The tests also check the schemas *constrain* something -- one that accepts anything is worse than
+none, because it implies a check that is not happening -- and that no schema file describes a
+command which no longer exists.
 
 #### F. Long-running operations — *a gap the recent work created*
 
@@ -210,7 +214,7 @@ Each item below is tracked as a GitHub issue, collected under
 | ~~1~~ | ~~**C**~~ | [#13](https://github.com/grammy-jiang/FlashCrucible/issues/13) | **Done** — Removes a recurring source of avoidable CI failures |
 | ~~1~~ | ~~**G**~~ | [#14](https://github.com/grammy-jiang/FlashCrucible/issues/14) | **Done** — Small; removes guesswork for callers |
 | ~~2~~ | ~~**A**~~ | [#15](https://github.com/grammy-jiang/FlashCrucible/issues/15) | **Done** — found five mislabelled commands on its first run |
-| 3 | **E** | [#16](https://github.com/grammy-jiang/FlashCrucible/issues/16) | Makes the output contract complete and verifiable |
+| ~~3~~ | ~~**E**~~ | [#16](https://github.com/grammy-jiang/FlashCrucible/issues/16) | **Done** — found a plan-key inconsistency on its first run |
 | 4 | **F** | [#17](https://github.com/grammy-jiang/FlashCrucible/issues/17) | Fixes the synchronous-only limitation |
 | 5 | **H** | [#18](https://github.com/grammy-jiang/FlashCrucible/issues/18) | Only once E and F are done |
 | — | **D** | [#19](https://github.com/grammy-jiang/FlashCrucible/issues/19) | Optional; worth it only for the critical predicates |

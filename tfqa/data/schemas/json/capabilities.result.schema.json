@@ -1,0 +1,119 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://flashcrucible.local/schemas/capabilities.result.schema.json",
+  "title": "tfqa capabilities result",
+  "description": "Which external tools and features this host supports. Validates the whole CLIResponse for `tfqa capabilities`. The shape of `data` depends on `status`, so it is constrained conditionally: an error response carries `details` or nothing.",
+  "schema_version": 2,
+  "type": "object",
+  "required": [
+    "status",
+    "command",
+    "message",
+    "data"
+  ],
+  "properties": {
+    "status": {
+      "enum": [
+        "ok",
+        "fail",
+        "error",
+        "aborted"
+      ]
+    },
+    "command": {
+      "const": "capabilities"
+    },
+    "data": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "ok",
+              "fail"
+            ]
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "external_tools"
+            ],
+            "properties": {
+              "version": {
+                "type": "string"
+              },
+              "platform": {
+                "type": "string"
+              },
+              "external_tools": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "required": [
+                    "name",
+                    "available"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "available": {
+                      "type": "boolean"
+                    },
+                    "version": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "path": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "notes": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              },
+              "features": {
+                "type": "object"
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "details": {
+                "type": "object"
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": true
+}

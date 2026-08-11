@@ -1,0 +1,164 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://flashcrucible.local/schemas/pipeline.result.schema.json",
+  "title": "tfqa pipeline result",
+  "description": "An orchestrated run of several stages. Validates the whole CLIResponse for `tfqa pipeline`. The shape of `data` depends on `status`, so it is constrained conditionally: an error response carries `details` or nothing.",
+  "schema_version": 2,
+  "type": "object",
+  "required": [
+    "status",
+    "command",
+    "message",
+    "data"
+  ],
+  "properties": {
+    "status": {
+      "enum": [
+        "ok",
+        "fail",
+        "error",
+        "aborted"
+      ]
+    },
+    "command": {
+      "const": "pipeline"
+    },
+    "data": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "ok",
+              "fail"
+            ]
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "stage_plan"
+                ],
+                "properties": {
+                  "stage_plan": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "requested_stage_plan": {
+                    "type": [
+                      "array",
+                      "null"
+                    ],
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "stages": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  },
+                  "metadata": {
+                    "type": "object"
+                  },
+                  "combo": {
+                    "type": [
+                      "object",
+                      "null"
+                    ]
+                  },
+                  "image_options": {
+                    "type": [
+                      "object",
+                      "null"
+                    ]
+                  }
+                },
+                "additionalProperties": true
+              },
+              {
+                "type": "object",
+                "required": [
+                  "plan"
+                ],
+                "properties": {
+                  "plan": {
+                    "type": "object",
+                    "required": [
+                      "device"
+                    ],
+                    "properties": {
+                      "device": {
+                        "type": "string"
+                      },
+                      "safety": {
+                        "type": "object",
+                        "required": [
+                          "would_run",
+                          "error_code",
+                          "reason",
+                          "details"
+                        ],
+                        "properties": {
+                          "would_run": {
+                            "type": "boolean"
+                          },
+                          "error_code": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "reason": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "details": {
+                            "type": "object"
+                          }
+                        }
+                      }
+                    },
+                    "additionalProperties": true
+                  }
+                },
+                "additionalProperties": true
+              }
+            ]
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "details": {
+                "type": "object"
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": true
+}

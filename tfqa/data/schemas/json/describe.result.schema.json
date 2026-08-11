@@ -1,0 +1,143 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://flashcrucible.local/schemas/describe.result.schema.json",
+  "title": "tfqa describe result",
+  "description": "Argument and safety metadata for one command. Validates the whole CLIResponse for `tfqa describe`. The shape of `data` depends on `status`, so it is constrained conditionally: an error response carries `details` or nothing.",
+  "schema_version": 2,
+  "type": "object",
+  "required": [
+    "status",
+    "command",
+    "message",
+    "data"
+  ],
+  "properties": {
+    "status": {
+      "enum": [
+        "ok",
+        "fail",
+        "error",
+        "aborted"
+      ]
+    },
+    "command": {
+      "const": "describe"
+    },
+    "data": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "ok",
+              "fail"
+            ]
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "describe"
+            ],
+            "properties": {
+              "describe": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "destructive",
+                  "requires_root",
+                  "required_tools",
+                  "optional_tools",
+                  "arguments",
+                  "options"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "summary": {
+                    "type": "string"
+                  },
+                  "destructive": {
+                    "type": "boolean"
+                  },
+                  "destructive_when": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "requires_root": {
+                    "type": "boolean"
+                  },
+                  "required_tools": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "optional_tools": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "degradation": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "result_schema": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "arguments": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  },
+                  "options": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  }
+                },
+                "additionalProperties": true
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "details": {
+                "type": "object"
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": true
+}

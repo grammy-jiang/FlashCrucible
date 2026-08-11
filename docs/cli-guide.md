@@ -127,6 +127,9 @@ These commands let humans and AI agents stay synchronised with the CLI without h
 - **`describe <command> --output json`** returns a stable schema (`CLIResponse.data.describe`)
   documenting arguments, options, defaults, destructive flags, and required privileges. The human
   output stays a concise overview.
+- **`describe <command> --output json`** carries a `result_schema` naming the schema for that
+  command's `data` payload, so a caller can validate a result rather than guess at its keys.
+  `cli_response.schema.json` constrains only the envelope.
 - **`describe-schemas --output json`** lists every JSON schema under `tfqa/data/schemas/json` with its
   title, schema version, and description. Narrow with `--schema <name>` (e.g. `--schema
   cli_response` or `cli_response.schema.json`).
