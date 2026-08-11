@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TestResult",
+  "description": "Structured result emitted by a test engine",
+  "schema_version": "v1",
+  "type": "object",
+  "required": ["schema_version","name","status","started_at","finished_at"],
+  "properties": {
+    "schema_version": {"type": "string"},
+    "name": {"type": "string"},
+    "status": {"type": "string","enum": ["ok","warning","failed","skipped","error"]},
+    "started_at": {"type": "string","format": "date-time"},
+    "finished_at": {"type": "string","format": "date-time"},
+    "duration_seconds": {"type": "number","minimum": 0},
+    "metrics": {"type": "object"},
+    "details": {"type": "object"},
+    "error_code": {"type": ["string","null"]},
+    "error_message": {"type": ["string","null"]},
+    "warnings": {"type": "array","items": {"type":"string"}},
+    "logs_path": {"type": ["string","null"]}
+  },
+  "additionalProperties": false
+}

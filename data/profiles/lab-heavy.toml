@@ -1,0 +1,16 @@
+name = "lab-heavy"
+description = "Longer, more thorough profile used in lab runs"
+
+[tests.quick]
+destructive = false
+sample_points = 50
+
+[tests.capacity_full]
+destructive = true
+verify_passes = 1
+
+[tests.endurance]
+duration_hours = 48
+pass_count = 20
+force = true
+write_pattern = "sequential"

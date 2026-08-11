@@ -1,0 +1,70 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://flashcrucible.local/schemas/trends.schema.json",
+  "title": "TFQA trends aggregation",
+  "description": "Schema for aggregated stage metric trends returned by tfqa.reporting.trends and the `tfqa trends` command.",
+  "schema_version": 2,
+  "type": "object",
+  "required": [
+    "entries_processed",
+    "stage_metrics",
+    "run_ids"
+  ],
+  "properties": {
+    "entries_processed": {"type": "integer", "minimum": 0},
+    "stage_filter": {"type": ["string", "null"]},
+    "stage_metrics": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "count",
+          "occurrences",
+          "totals",
+          "averages",
+          "last_metrics",
+          "status_counts",
+          "duration"
+        ],
+        "properties": {
+          "count": {"type": "integer", "minimum": 0},
+          "occurrences": {"type": "integer", "minimum": 0},
+          "status_counts": {
+            "type": "object",
+            "additionalProperties": {"type": "integer", "minimum": 0}
+          },
+          "duration": {
+            "type": "object",
+            "required": ["count", "average", "min", "max", "last"],
+            "properties": {
+              "count": {"type": "integer", "minimum": 0},
+              "average": {"type": ["number", "null"]},
+              "min": {"type": ["number", "null"]},
+              "max": {"type": ["number", "null"]},
+              "last": {"type": ["number", "null"]}
+            },
+            "additionalProperties": false
+          },
+          "totals": {
+            "type": "object",
+            "additionalProperties": {"type": "number"}
+          },
+          "averages": {
+            "type": "object",
+            "additionalProperties": {"type": "number"}
+          },
+          "last_metrics": {
+            "type": "object",
+            "additionalProperties": {"type": "number"}
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "run_ids": {
+      "type": "array",
+      "items": {"type": "string"}
+    }
+  },
+  "additionalProperties": true
+}

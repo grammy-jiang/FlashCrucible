@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://flashcrucible.local/schemas/automation_report.schema.json",
+  "title": "TFQA automation report",
+  "description": "Schema for the bundled automation report payload containing history, summary, and trends.",
+  "schema_version": 1,
+  "type": "object",
+  "required": ["history_entry", "summary", "trends"],
+  "properties": {
+    "history_entry": { "$ref": "https://flashcrucible.local/schemas/history_entry.schema.json" },
+    "summary": { "$ref": "https://flashcrucible.local/schemas/summary.schema.json" },
+    "trends": { "$ref": "https://flashcrucible.local/schemas/trends.schema.json" }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,97 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://flashcrucible.local/schemas/summary.schema.json",
+  "title": "TFQA run summary",
+  "description": "Machine-readable schema for the output of tfqa.reporting.summary and the `tfqa report` command.",
+  "schema_version": 1,
+  "type": "object",
+  "required": [
+    "run_id",
+    "log_path",
+    "event_count",
+    "stage_summaries",
+    "overall_status",
+    "metrics_by_stage",
+    "metrics_series_by_stage",
+    "time_series",
+    "events"
+  ],
+  "properties": {
+    "run_id": {"type": "string"},
+    "log_path": {"type": "string"},
+    "event_count": {"type": "integer", "minimum": 0},
+    "start": {"type": ["string", "null"]},
+    "end": {"type": ["string", "null"]},
+    "duration_seconds": {"type": ["number", "null"]},
+    "stage_summaries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "stage": {"type": ["string", "null"]},
+          "status": {"type": ["string", "null"], "enum": ["ok", "warning", "failed", "error", "skipped", null]},
+          "metrics": {"type": "object"},
+          "timestamp": {"type": ["string", "null"]}
+        },
+        "required": ["stage", "status", "metrics", "timestamp"],
+        "additionalProperties": true
+      }
+    },
+    "overall_status": {
+      "type": "string",
+      "enum": ["ok", "warning", "failed", "error", "skipped"]
+    },
+    "metrics_by_stage": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {"type": "number"}
+      }
+    },
+    "metrics_series_by_stage": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "timestamp": {"type": ["string", "null"]},
+            "phase": {"type": ["string", "null"]},
+            "status": {"type": ["string", "null"], "enum": ["ok", "warning", "failed", "error", "skipped", null]},
+            "event_type": {"type": ["string", "null"]},
+            "metrics": {
+              "type": "object",
+              "additionalProperties": {"type": "number"}
+            }
+          },
+          "required": ["timestamp", "phase", "status", "event_type", "metrics"],
+          "additionalProperties": true
+        }
+      }
+    },
+    "time_series": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "timestamp": {"type": ["string", "null"]},
+          "phase": {"type": ["string", "null"]},
+          "stage": {"type": ["string", "null"]},
+          "event_type": {"type": ["string", "null"]},
+          "metrics": {
+            "type": "object",
+            "additionalProperties": {"type": "number"}
+          },
+          "message": {"type": ["string", "null"]}
+        },
+        "required": ["timestamp", "phase", "event_type", "metrics"],
+        "additionalProperties": true
+      }
+    },
+    "events": {
+      "type": "array",
+      "items": {"type": "object"}
+    }
+  },
+  "additionalProperties": true
+}

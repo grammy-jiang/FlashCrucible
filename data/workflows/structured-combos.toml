@@ -1,0 +1,24 @@
+[[combos]]
+name = "camera-logger"
+description = "Camera/logging combo with quick capacity check, flash, workload and health snapshots."
+stages = ["detect", "quick-test", "image-flash", "workload-smallfiles", "health", "summary"]
+profile = "camera-logger"
+
+[combos.image]
+block_size = "4M"
+conv_flags = ["fsync", "noerror"]
+verify = true
+write_timeout = 600
+verify_timeout = 300
+
+[[combos]]
+name = "router-telemetry"
+description = "Router telemetry combo that pairs quick checks with workload and health verifications."
+stages = ["detect", "quick-test", "workload-smallfiles", "health", "summary"]
+profile = "router-telemetry"
+
+[[combos]]
+name = "full-capacity"
+description = "Full capacity and surface validation pipeline."
+stages = ["detect", "full-capacity-test", "surface-scan", "summary"]
+profile = "default"

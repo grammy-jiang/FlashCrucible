@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Capabilities",
+  "description": "Snapshot of platform capabilities and external tool availability",
+  "schema_version": "v1",
+  "type": "object",
+  "required": ["schema_version","version","platform","external_tools","features"],
+  "properties": {
+    "schema_version": {"type": "string"},
+    "version": {"type": "string"},
+    "platform": {"type": "string"},
+    "external_tools": {"type": "object"},
+    "features": {"type": "object"}
+  },
+  "additionalProperties": false
+}

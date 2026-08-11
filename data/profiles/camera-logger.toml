@@ -1,0 +1,23 @@
+name = "camera-logger"
+description = "Preset profile that mimics high-write sequential logging for surveillance workloads."
+
+[tests.quick]
+destructive = false
+sample_points = 20
+
+[tests.performance]
+seq_block_size = "8M"
+duration_seconds = 45
+
+[tests.endurance]
+duration_hours = 2
+pass_count = 10
+force = false
+write_pattern = "sequential"
+
+[tests.workload]
+file_count = 640
+file_size_bytes = 4096
+delete_after = false
+read_after_write = false
+working_dir = ""

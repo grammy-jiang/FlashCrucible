@@ -1,0 +1,16 @@
+name = "default"
+description = "Safe default profile: quick tests, non-destructive by default"
+
+[tests.quick]
+destructive = false
+sample_points = 10
+
+[tests.endurance]
+duration_minutes = 30
+pass_count = 2
+force = false
+write_pattern = "sequential"
+
+[tests.performance]
+seq_block_size = "4M"
+duration_seconds = 30

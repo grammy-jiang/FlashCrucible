@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "DeviceInfo",
+  "description": "Block device metadata used throughout tfqa",
+  "schema_version": "v1",
+  "type": "object",
+  "required": ["schema_version","path","name","size_bytes","is_removable","is_system_disk"],
+  "properties": {
+    "schema_version": {"type": "string"},
+    "path": {"type": "string"},
+    "name": {"type": "string"},
+    "model": {"type": ["string","null"]},
+    "vendor": {"type": ["string","null"]},
+    "serial": {"type": ["string","null"]},
+    "size_bytes": {"type": "integer","minimum": 0},
+    "is_removable": {"type": "boolean"},
+    "is_system_disk": {"type": "boolean"},
+    "mountpoints": {
+      "type": "array",
+      "items": {"type":"object","properties":{"mountpoint":{"type":"string"},"fstype":{"type":"string"}},"required":["mountpoint"]}
+    },
+    "transport": {"type": ["string","null"]}
+  },
+  "additionalProperties": false
+}

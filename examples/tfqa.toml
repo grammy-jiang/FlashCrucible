@@ -1,0 +1,9 @@
+[ui]
+default_output = "human"
+default_mode = "human"
+
+[logging]
+log_dir = "~/.tfqa/logs"
+
+[tests]
+default_profile = "default"

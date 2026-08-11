@@ -1,0 +1,24 @@
+name = "router-telemetry"
+description = "Profile that blends endurance and small-file workload to simulate embedded router storage.
+It favors small reads/writes while exercising the endurance engine with forced passes."
+
+[tests.quick]
+destructive = false
+sample_points = 30
+
+[tests.performance]
+seq_block_size = "4M"
+duration_seconds = 60
+
+[tests.endurance]
+duration_hours = 12
+pass_count = 12
+force = true
+write_pattern = "random"
+
+[tests.workload]
+file_count = 1024
+file_size_bytes = 2048
+delete_after = true
+read_after_write = true
+working_dir = ""
