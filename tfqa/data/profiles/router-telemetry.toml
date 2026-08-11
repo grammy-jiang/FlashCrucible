@@ -1,6 +1,6 @@
 name = "router-telemetry"
-description = "Profile that blends endurance and small-file workload to simulate embedded router storage.
-It favors small reads/writes while exercising the endurance engine with forced passes."
+description = """Profile that blends endurance and small-file workload to simulate embedded router storage.
+It favors small reads/writes while exercising the endurance engine with forced passes."""
 
 [tests.quick]
 destructive = false

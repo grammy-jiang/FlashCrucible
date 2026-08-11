@@ -2465,6 +2465,12 @@ def _print_profile_list(message: str, profiles: list[dict[str, Any]]) -> None:
         return
     for profile in profiles:
         profile_name = profile.get("name", "unknown")
+        error = profile.get("error")
+        if error:
+            print(f"- {profile_name}: UNREADABLE — {error}")
+            if profile.get("path"):
+                print(f"    path: {profile['path']}")
+            continue
         description = profile.get("description") or NO_DESCRIPTION
         duration = profile.get("duration_seconds")
         pass_count = profile.get("pass_count")

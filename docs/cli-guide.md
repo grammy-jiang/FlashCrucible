@@ -217,6 +217,11 @@ synthetic — see README *Known limitations* #5.
 
 ## Profiles and endurance metadata
 
+A preset that cannot be parsed is reported rather than skipped: its entry carries an `error`
+field (and `path`), and the human output prints `- <name>: UNREADABLE — <reason>`. Silently
+dropping it made a malformed file look like a profile that had never existed, while `combos` still
+referred to it by name.
+
 `tfqa profiles` inspects every TOML preset under `tfqa/data/profiles/`, printing `name`, `description`
 (defaulting to "No description"), `duration_seconds`, `pass_count`, `force`, `write_pattern`, and
 the source `path`. The JSON data follows `tfqa.orchestration.profile.EnduranceProfile`, so numeric
