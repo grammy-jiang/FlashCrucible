@@ -16,8 +16,13 @@ from tfqa.core.models import (
 )
 
 
-def run_simple_endurance(ctx: RunContext, config: EnduranceConfig) -> TestResult:
-    """Run a simple endurance simulation and emit structured metrics."""
+def validate_config(config: EnduranceConfig) -> None:
+    """Reject a config the engine cannot run.
+
+    Split out from the engine so the CLI can apply the same rules before
+    emitting a dry-run plan; otherwise `--dry-run` advertises a plan that the
+    real invocation would refuse.
+    """
 
     if config.duration_seconds <= 0:
         raise ArgumentError(
@@ -30,6 +35,12 @@ def run_simple_endurance(ctx: RunContext, config: EnduranceConfig) -> TestResult
             message="Pass count must be at least 1",
             details={"pass_count": config.pass_count},
         )
+
+
+def run_simple_endurance(ctx: RunContext, config: EnduranceConfig) -> TestResult:
+    """Run a simple endurance simulation and emit structured metrics."""
+
+    validate_config(config)
 
     pass_history: list[dict[str, Any]] = []
     total_bytes = 0

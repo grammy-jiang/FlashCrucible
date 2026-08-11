@@ -102,16 +102,13 @@ def _process_file_operations(
     return metrics, status, message, deleted_successfully
 
 
-def run_small_file_workload(
-    ctx: RunContext,
-    config: SmallFileWorkloadConfig,
-    *,
-    write_file: FileWriteFn = _default_write_file,
-    read_file: FileReadFn = _default_read_file,
-    delete_file: FileDeleteFn = _default_delete_file,
-    event_emitter: EventEmitter = emit_event,
-) -> TestResult:
-    """Execute the small-file workload test and emit structured events."""
+def validate_config(config: SmallFileWorkloadConfig) -> None:
+    """Reject a config the engine cannot run.
+
+    Split out from the engine so the CLI can apply the same rules before
+    emitting a dry-run plan; otherwise `--dry-run` advertises a plan that the
+    real invocation would refuse.
+    """
 
     if config.file_count <= 0:
         raise ArgumentError(
@@ -123,6 +120,20 @@ def run_small_file_workload(
             message="file_size_bytes must be positive",
             details={"file_size_bytes": config.file_size_bytes},
         )
+
+
+def run_small_file_workload(
+    ctx: RunContext,
+    config: SmallFileWorkloadConfig,
+    *,
+    write_file: FileWriteFn = _default_write_file,
+    read_file: FileReadFn = _default_read_file,
+    delete_file: FileDeleteFn = _default_delete_file,
+    event_emitter: EventEmitter = emit_event,
+) -> TestResult:
+    """Execute the small-file workload test and emit structured events."""
+
+    validate_config(config)
 
     working_dir, cleanup_dir = _ensure_working_dir(config)
     total_bytes_written = 0

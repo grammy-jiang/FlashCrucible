@@ -145,15 +145,26 @@ can find out that a card is mounted without attempting the write:
     "safety": {
       "would_run": false,
       "error_code": "DEVICE_UNSAFE",
-      "details": { "mountpoints": [{ "mountpoint": "/media/boot", "fstype": "vfat" }] }
+      "reason": "has active mountpoints. Use --force --yes ...",
+      "details": {
+        "device_path": "/dev/sdX",
+        "mountpoints": [{ "mountpoint": "/media/boot", "fstype": "vfat" }]
+      }
     }
   }
 }
 ```
 
+The four `safety` keys are always present — on a clearing device they are
+`{"would_run": true, "error_code": null, "reason": null, "details": {}}` — so automation never
+has to handle two shapes.
+
 Commands that never clear the unmounted requirement (`workload-smallfiles`,
 `surface-scan --mode readonly`, read-only pipeline plans) omit the `safety` block rather than
 predict a refusal that does not apply.
+
+A dry run applies the same argument validation as a real run, so it will not hand back a plan the
+real invocation would reject (`--mode typo`, `--duration 0`, `--file-count 0`, …).
 
 ## Automation and AI
 

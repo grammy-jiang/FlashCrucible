@@ -238,13 +238,19 @@ def _plan_safety_preview(
     try:
         _assert_device_safe(ctx, device, force, confirmed=confirmed)
     except TFQAError as exc:
+        # `exc.message` is prefixed prose ("Device unsafe for destructive
+        # operation: ..."); details carries the bare reason plus the structured
+        # context. Keep the keys identical in both branches so automation does
+        # not have to handle two shapes.
+        details = dict(exc.details)
+        reason = details.pop("reason", None) or exc.message
         return {
             "would_run": False,
             "error_code": exc.error_code,
-            "reason": exc.message,
-            "details": exc.details,
+            "reason": reason,
+            "details": details,
         }
-    return {"would_run": True}
+    return {"would_run": True, "error_code": None, "reason": None, "details": {}}
 
 
 def _emit_dry_run(
@@ -1029,6 +1035,12 @@ def performance(
         _config = _ensure_config(ctx)
         target_device = devices_mod.get_device(device)
         normalized_mode = mode.lower()
+        # Validate before the dry-run return so a plan is never advertised for
+        # an invocation the real run would reject.
+        if normalized_mode not in ("sequential", "random"):
+            raise ArgumentError(
+                message="Unknown performance mode; choose sequential or random."
+            )
 
         if _resolve_dry_run(ctx, dry_run):
             _emit_dry_run(
@@ -1061,15 +1073,11 @@ def performance(
                 random_read_percentage=random_read_percentage,
             )
             message = f"Random performance test completed for {target_device.path}"
-        elif normalized_mode == "sequential":
+        else:  # sequential; the mode was validated above
             payload = perf_basic.run_seq_performance(
                 target_device, duration_seconds=duration
             )
             message = f"Sequential performance test completed for {target_device.path}"
-        else:
-            raise ArgumentError(
-                message="Unknown performance mode; choose sequential or random."
-            )
 
         resp = CLIResponse(
             status="ok",
@@ -1601,10 +1609,15 @@ def full_capacity_test(
         actual_output = _resolve_output(ctx, output)
         _config = _ensure_config(ctx)
         target_device = devices_mod.get_device(device)
-        # Honour the global --yes as well as this command's own, so
-        # `tfqa --yes full-capacity-test --force` behaves like every other
-        # command rather than silently ignoring the confirmation.
-        actual_yes = bool(yes) or bool(ctx.obj.get("global", {}).get("yes", False))
+        # Fall back to the global --yes so `tfqa --yes full-capacity-test
+        # --force` behaves like every other command. The local option is
+        # tri-state: an explicit --no-yes must revoke the global confirmation
+        # rather than be overridden by it.
+        actual_yes = (
+            bool(yes)
+            if yes is not None
+            else bool(ctx.obj.get("global", {}).get("yes", False))
+        )
 
         if _resolve_dry_run(ctx, dry_run):
             _emit_dry_run(
@@ -1890,6 +1903,9 @@ def endurance(
         # The effective force flag can come from the profile, so evaluate
         # safety against the merged config rather than the raw CLI option.
         effective_force = bool(engine_config.force)
+        # Same rules the engine applies, so a dry run never advertises a plan
+        # the real invocation would refuse.
+        endurance_simple.validate_config(engine_config)
 
         if _resolve_dry_run(ctx, dry_run):
             _emit_dry_run(
@@ -2772,6 +2788,10 @@ def workload_smallfiles_command(
             delete_after=delete_after,
             read_after_write=read_after_write,
         )
+        # Same rules the engine applies, so a dry run never advertises a plan
+        # the real invocation would refuse.
+        workload_smallfiles.validate_config(cfg)
+
         if _resolve_dry_run(ctx, dry_run):
             _emit_dry_run(
                 ctx,

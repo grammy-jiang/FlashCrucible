@@ -251,6 +251,144 @@ class DryRunSafetyPreview(DryRunTestCase):
         run_pipeline.assert_not_called()
 
 
+class DryRunValidatesArguments(DryRunTestCase):
+    """A dry run must reject what the real invocation would reject.
+
+    Otherwise automation can approve a plan that cannot execute.
+    """
+
+    def assert_rejected(self, argv: list[str]) -> None:
+        with (
+            patch("tfqa.core.devices.get_device", return_value=SAFE),
+            patch("tfqa.orchestration.profile.load_profile", return_value=PROFILE),
+        ):
+            result = self.runner.invoke(app, ["--dry-run", *argv, "--output", "json"])
+        self.assertEqual(result.exit_code, 2, msg=result.stdout)
+        resp = CLIResponse.model_validate_json(result.stdout)
+        self.assertEqual(resp.error_code, "INVALID_ARGUMENT")
+
+    def test_performance_rejects_an_unknown_mode(self):
+        self.assert_rejected(["performance", "--device", SAFE.path, "--mode", "typo"])
+
+    def test_endurance_rejects_non_positive_duration(self):
+        self.assert_rejected(["endurance", "--device", SAFE.path, "--duration", "0"])
+
+    def test_endurance_rejects_non_positive_passes(self):
+        self.assert_rejected(["endurance", "--device", SAFE.path, "--passes", "0"])
+
+    def test_workload_rejects_non_positive_file_count(self):
+        self.assert_rejected(
+            ["workload-smallfiles", "--device", SAFE.path, "--file-count", "0"]
+        )
+
+    def test_workload_rejects_non_positive_file_size(self):
+        self.assert_rejected(
+            ["workload-smallfiles", "--device", SAFE.path, "--file-size", "0"]
+        )
+
+
+class FullCapacityConfirmation(DryRunTestCase):
+    def _would_run(self, argv: list[str]) -> bool:
+        with (
+            patch("tfqa.core.devices.get_device", return_value=MOUNTED),
+            patch("tfqa.tests.capacity.full.run_full_capacity"),
+        ):
+            result = self.runner.invoke(app, [*argv, "--output", "json"])
+        plan = CLIResponse.model_validate_json(result.stdout).data["plan"]
+        return bool(plan["safety"]["would_run"])
+
+    def test_global_yes_confirms(self):
+        self.assertTrue(
+            self._would_run(
+                [
+                    "--dry-run",
+                    "--yes",
+                    "full-capacity-test",
+                    "--device",
+                    MOUNTED.path,
+                    "--force",
+                ]
+            )
+        )
+
+    def test_explicit_no_yes_revokes_the_global_yes(self):
+        # The local option is tri-state; --no-yes must win over a global --yes
+        # rather than be OR-ed away by it.
+        self.assertFalse(
+            self._would_run(
+                [
+                    "--dry-run",
+                    "--yes",
+                    "full-capacity-test",
+                    "--device",
+                    MOUNTED.path,
+                    "--force",
+                    "--no-yes",
+                ]
+            )
+        )
+
+    def test_explicit_no_yes_refuses_the_real_run(self):
+        with (
+            patch("tfqa.core.devices.get_device", return_value=MOUNTED),
+            patch("tfqa.tests.capacity.full.run_full_capacity") as run_full,
+        ):
+            result = self.runner.invoke(
+                app,
+                [
+                    "--yes",
+                    "full-capacity-test",
+                    "--device",
+                    MOUNTED.path,
+                    "--force",
+                    "--no-yes",
+                    "--output",
+                    "json",
+                ],
+            )
+        self.assertEqual(result.exit_code, 3, msg=result.stdout)
+        run_full.assert_not_called()
+
+
+class SafetyBlockSchema(DryRunTestCase):
+    KEYS = {"would_run", "error_code", "reason", "details"}
+
+    def _safety(self, device: DeviceInfo) -> dict[str, Any]:
+        with (
+            patch("tfqa.core.devices.get_device", return_value=device),
+            patch("tfqa.tests.capacity.quick.run_quick_capacity"),
+        ):
+            result = self.runner.invoke(
+                app,
+                [
+                    "--dry-run",
+                    "quick-test",
+                    "--device",
+                    device.path,
+                    "--output",
+                    "json",
+                ],
+            )
+        plan = CLIResponse.model_validate_json(result.stdout).data["plan"]
+        return dict(plan["safety"])
+
+    def test_keys_are_identical_in_both_branches(self):
+        # Automation should not have to handle two shapes.
+        self.assertEqual(set(self._safety(SAFE)), self.KEYS)
+        self.assertEqual(set(self._safety(MOUNTED)), self.KEYS)
+
+    def test_reason_is_the_bare_reason_not_the_prefixed_message(self):
+        safety = self._safety(MOUNTED)
+        self.assertTrue(safety["reason"].startswith("has active mountpoints"))
+        self.assertNotIn("Device unsafe for destructive operation", safety["reason"])
+
+    def test_details_keep_the_structured_context_without_the_reason(self):
+        details = self._safety(MOUNTED)["details"]
+        self.assertEqual(details["mountpoints"], [MOUNTPOINT])
+        self.assertEqual(details["device_path"], MOUNTED.path)
+        self.assertNotIn("reason", details)
+
+
 class DryRunPlanContents(DryRunTestCase):
     def test_pipeline_plan_reports_the_negotiated_stages(self):
         result, _ = self.invoke(
