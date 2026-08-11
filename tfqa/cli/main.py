@@ -214,15 +214,100 @@ def _resolve_output(ctx: typer.Context, explicit: str | None) -> str:
     return ctx.obj.get("global", {}).get("output", "human")
 
 
-def _assert_device_safe(ctx: typer.Context, device: DeviceInfo, force: bool) -> None:
+def _resolve_dry_run(ctx: typer.Context, explicit: bool) -> bool:
+    """True when either the global `--dry-run` or the command's own flag is set.
+
+    The global flag used to be parsed and stored but never read, so
+    `tfqa --dry-run <destructive command>` executed for real.
+    """
+
+    if explicit:
+        return True
+    return bool(ctx.obj.get("global", {}).get("dry_run", False))
+
+
+def _plan_safety_preview(
+    ctx: typer.Context, device: DeviceInfo, force: bool, confirmed: bool | None = None
+) -> dict[str, Any]:
+    """Report whether the real run would clear the destructive-operation guard.
+
+    A dry run is the natural place to find out that the device is mounted,
+    rather than discovering it only when the write is attempted.
+    """
+
+    try:
+        _assert_device_safe(ctx, device, force, confirmed=confirmed)
+    except TFQAError as exc:
+        # `exc.message` is prefixed prose ("Device unsafe for destructive
+        # operation: ..."); details carries the bare reason plus the structured
+        # context. Keep the keys identical in both branches so automation does
+        # not have to handle two shapes.
+        details = dict(exc.details)
+        reason = details.pop("reason", None) or exc.message
+        return {
+            "would_run": False,
+            "error_code": exc.error_code,
+            "reason": reason,
+            "details": details,
+        }
+    return {"would_run": True, "error_code": None, "reason": None, "details": {}}
+
+
+def _emit_dry_run(
+    ctx: typer.Context,
+    command_name: str,
+    device: DeviceInfo,
+    plan: dict[str, Any],
+    actual_output: str,
+    *,
+    force: bool = False,
+    confirmed: bool | None = None,
+    label: str | None = None,
+    check_safety: bool = True,
+) -> None:
+    """Print the plan a destructive command would execute, and stop.
+
+    `check_safety=False` is for commands that legitimately run on a mounted
+    device (workload-smallfiles), where a refusal preview would be misleading.
+    """
+
+    if check_safety:
+        plan = {
+            **plan,
+            "safety": _plan_safety_preview(ctx, device, force, confirmed),
+        }
+    resp = CLIResponse(
+        status="ok",
+        command=command_name,
+        message=f"Dry run: {label or command_name} plan prepared for {device.path}.",
+        data={"plan": plan},
+    )
+    if actual_output == "json":
+        print(resp.model_dump_json())
+        return
+    print(resp.message)
+    print(f"Plan: {plan}")
+
+
+def _assert_device_safe(
+    ctx: typer.Context,
+    device: DeviceInfo,
+    force: bool,
+    *,
+    confirmed: bool | None = None,
+) -> None:
     """Refuse to write to a mounted device or a system disk.
 
     Every command that writes raw blocks must call this before touching the
     device. Overriding requires both `--force` and `--yes`, so a stray `--force`
     left in a script cannot on its own arm a destructive run.
+
+    `confirmed` overrides the global `--yes` for commands that also expose their
+    own `--yes` option.
     """
 
-    confirmed = bool(ctx.obj.get("global", {}).get("yes", False))
+    if confirmed is None:
+        confirmed = bool(ctx.obj.get("global", {}).get("yes", False))
     safety_mod.assert_safe_for_destructive(device, force=force, yes=confirmed)
 
 
@@ -754,25 +839,19 @@ def quick_test(
         _config = _ensure_config(ctx)
         target_device = devices_mod.get_device(device)
 
-        if dry_run:
-            plan = {
-                "device": target_device.path,
-                "free_space_only": free_space_only,
-            }
-            dry_run_message = (
-                f"Dry run: quick-test plan prepared for {target_device.path}."
+        if _resolve_dry_run(ctx, dry_run):
+            _emit_dry_run(
+                ctx,
+                command_name,
+                target_device,
+                {
+                    "device": target_device.path,
+                    "free_space_only": free_space_only,
+                    "timeout_seconds": f3_timeout,
+                },
+                actual_output,
+                force=force,
             )
-            resp = CLIResponse(
-                status="ok",
-                command=command_name,
-                message=dry_run_message,
-                data={"plan": plan},
-            )
-            if actual_output == "json":
-                print(resp.model_dump_json())
-                return
-            print(resp.message)
-            print(f"Plan: {plan}")
             return
 
         # f3probe writes probe patterns across the device, so this is a
@@ -943,6 +1022,9 @@ def performance(
         help="Read percentage for random rw mix (0-100).",
     ),
     force: bool = typer.Option(False, "--force", help=FORCE_HELP),
+    dry_run: bool = typer.Option(
+        False, DRY_RUN_FLAG, help="Show the benchmark plan without running it."
+    ),
     output: str | None = typer.Option(None, "--output", "-o", help=OUTPUT_HELP),
 ) -> None:
     """Run a synthetic sequential performance benchmark."""
@@ -952,8 +1034,34 @@ def performance(
         actual_output = _resolve_output(ctx, output)
         _config = _ensure_config(ctx)
         target_device = devices_mod.get_device(device)
-        _assert_device_safe(ctx, target_device, force)
         normalized_mode = mode.lower()
+        # Validate before the dry-run return so a plan is never advertised for
+        # an invocation the real run would reject.
+        if normalized_mode not in ("sequential", "random"):
+            raise ArgumentError(
+                message="Unknown performance mode; choose sequential or random."
+            )
+
+        if _resolve_dry_run(ctx, dry_run):
+            _emit_dry_run(
+                ctx,
+                command_name,
+                target_device,
+                {
+                    "device": target_device.path,
+                    "mode": normalized_mode,
+                    "duration_seconds": duration,
+                    "random_block_size": random_bs,
+                    "random_iodepth": random_iodepth,
+                    "random_rw": random_rw,
+                    "random_read_percentage": random_read_percentage,
+                },
+                actual_output,
+                force=force,
+            )
+            return
+
+        _assert_device_safe(ctx, target_device, force)
 
         if normalized_mode == "random":
             payload = perf_random.run_random_performance(
@@ -965,15 +1073,11 @@ def performance(
                 random_read_percentage=random_read_percentage,
             )
             message = f"Random performance test completed for {target_device.path}"
-        elif normalized_mode == "sequential":
+        else:  # sequential; the mode was validated above
             payload = perf_basic.run_seq_performance(
                 target_device, duration_seconds=duration
             )
             message = f"Sequential performance test completed for {target_device.path}"
-        else:
-            raise ArgumentError(
-                message="Unknown performance mode; choose sequential or random."
-            )
 
         resp = CLIResponse(
             status="ok",
@@ -1055,6 +1159,9 @@ def surface_scan(
         "--force",
         help="Allow destructive scans (required for mode=destructive).",
     ),
+    dry_run: bool = typer.Option(
+        False, DRY_RUN_FLAG, help="Show the scan plan without running it."
+    ),
     output: str | None = typer.Option(None, "--output", "-o", help=OUTPUT_HELP),
 ) -> None:
     """Inspect a device surface via a badblocks-powered scan."""
@@ -1071,6 +1178,29 @@ def surface_scan(
             )
         if normalized_mode == "destructive" and not force:
             raise ArgumentError("Destructive scans require --force to opt in.")
+
+        # After argument validation so a dry run still reports bad arguments,
+        # but before the safety guard so it can preview a refusal.
+        if _resolve_dry_run(ctx, dry_run):
+            _emit_dry_run(
+                ctx,
+                command_name,
+                target_device,
+                {
+                    "device": target_device.path,
+                    "mode": normalized_mode,
+                    "passes": passes,
+                    "duration_seconds": duration,
+                    "block_size": block_size,
+                    "force": force,
+                },
+                actual_output,
+                force=force,
+                # A read-only sweep never writes, so it has nothing to clear.
+                check_safety=normalized_mode == "destructive",
+            )
+            return
+
         if normalized_mode == "destructive":
             # A read-only sweep never writes, so only the destructive mode has
             # to clear the mounted/system-disk checks.
@@ -1153,6 +1283,9 @@ def filesystem_check(
     timeout: float = typer.Option(
         120.0, "--timeout", help="Timeout for fsck in seconds."
     ),
+    dry_run: bool = typer.Option(
+        False, DRY_RUN_FLAG, help="Show the fsck plan without running it."
+    ),
     output: str | None = typer.Option(None, "--output", "-o", help=OUTPUT_HELP),
 ) -> None:
     """Run fsck to validate the filesystem metadata for the target device."""
@@ -1168,6 +1301,24 @@ def filesystem_check(
         # let `--force` alone (with the default --read-only) run a repair-capable
         # fsck on a mounted device without any safety check.
         effective_read_only = read_only and not force
+
+        if _resolve_dry_run(ctx, dry_run):
+            _emit_dry_run(
+                ctx,
+                command_name,
+                target_device,
+                {
+                    "device": target_device.path,
+                    "read_only": effective_read_only,
+                    "force": force,
+                    "timeout_seconds": timeout,
+                },
+                actual_output,
+                force=force,
+                check_safety=not effective_read_only,
+            )
+            return
+
         if not effective_read_only:
             _assert_device_safe(ctx, target_device, force)
 
@@ -1300,6 +1451,9 @@ def image_flash(
         help="Timeout in seconds for the verify phase.",
     ),
     force: bool = typer.Option(False, "--force", help=FORCE_HELP),
+    dry_run: bool = typer.Option(
+        False, DRY_RUN_FLAG, help="Show the flash plan without writing the image."
+    ),
     output: str | None = typer.Option(None, "--output", "-o", help=OUTPUT_HELP),
 ) -> None:
     """Flash an image onto the selected device and optionally verify it."""
@@ -1309,11 +1463,31 @@ def image_flash(
         actual_output = _resolve_output(ctx, output)
         _config = _ensure_config(ctx)
         target_device = devices_mod.get_device(device)
+        conv_opts = _parse_conv_flags(conv_flags)
+
+        if _resolve_dry_run(ctx, dry_run):
+            _emit_dry_run(
+                ctx,
+                command_name,
+                target_device,
+                {
+                    "device": target_device.path,
+                    "image_path": str(image_path),
+                    "block_size": block_size,
+                    "conv_flags": list(conv_opts),
+                    "verify": verify,
+                    "write_timeout": write_timeout,
+                    "verify_timeout": verify_timeout,
+                },
+                actual_output,
+                force=force,
+            )
+            return
+
         # dd overwrites the whole device; never let this reach a mounted
         # filesystem or the system disk without an explicit override.
         _assert_device_safe(ctx, target_device, force)
         run_id = _generate_run_id()
-        conv_opts = _parse_conv_flags(conv_flags)
 
         result = run_image_flash(
             str(image_path),
@@ -1424,6 +1598,9 @@ def full_capacity_test(
         "-y",
         help="Confirm destructive operation (required when using --force).",
     ),
+    dry_run: bool = typer.Option(
+        False, DRY_RUN_FLAG, help="Show the test plan without writing to the device."
+    ),
 ) -> None:
     """Run a destructive full-span write+verify test (coming soon)."""
 
@@ -1432,10 +1609,33 @@ def full_capacity_test(
         actual_output = _resolve_output(ctx, output)
         _config = _ensure_config(ctx)
         target_device = devices_mod.get_device(device)
-        actual_yes = bool(yes)
-        safety_mod.assert_safe_for_destructive(
-            target_device, force=force, yes=actual_yes
+        # Fall back to the global --yes so `tfqa --yes full-capacity-test
+        # --force` behaves like every other command. The local option is
+        # tri-state: an explicit --no-yes must revoke the global confirmation
+        # rather than be overridden by it.
+        actual_yes = (
+            bool(yes)
+            if yes is not None
+            else bool(ctx.obj.get("global", {}).get("yes", False))
         )
+
+        if _resolve_dry_run(ctx, dry_run):
+            _emit_dry_run(
+                ctx,
+                command_name,
+                target_device,
+                {
+                    "device": target_device.path,
+                    "force": force,
+                    "confirmed": actual_yes,
+                },
+                actual_output,
+                force=force,
+                confirmed=actual_yes,
+            )
+            return
+
+        _assert_device_safe(ctx, target_device, force, confirmed=actual_yes)
         payload = full_capacity.run_full_capacity(
             target_device, force=force, yes=actual_yes
         )
@@ -1671,6 +1871,9 @@ def endurance(
         "-p",
         help="Named endurance profile to load from data/profiles.",
     ),
+    dry_run: bool = typer.Option(
+        False, DRY_RUN_FLAG, help="Show the endurance plan without running it."
+    ),
     output: str | None = typer.Option(None, "--output", "-o", help=OUTPUT_HELP),
 ) -> None:
     """Run a simple endurance/burn-in loop on the provided device."""
@@ -1699,7 +1902,30 @@ def endurance(
         engine_config = base_config.with_overrides(**overrides)
         # The effective force flag can come from the profile, so evaluate
         # safety against the merged config rather than the raw CLI option.
-        _assert_device_safe(ctx, target_device, bool(engine_config.force))
+        effective_force = bool(engine_config.force)
+        # Same rules the engine applies, so a dry run never advertises a plan
+        # the real invocation would refuse.
+        endurance_simple.validate_config(engine_config)
+
+        if _resolve_dry_run(ctx, dry_run):
+            _emit_dry_run(
+                ctx,
+                command_name,
+                target_device,
+                {
+                    "device": target_device.path,
+                    "profile": profile,
+                    "duration_seconds": engine_config.duration_seconds,
+                    "pass_count": engine_config.pass_count,
+                    "write_pattern": engine_config.write_pattern,
+                    "force": effective_force,
+                },
+                actual_output,
+                force=effective_force,
+            )
+            return
+
+        _assert_device_safe(ctx, target_device, effective_force)
 
         run_ctx = RunContext(
             run_id=run_id,
@@ -2318,6 +2544,9 @@ def pipeline(  # noqa: C901
         help="Timeout in seconds for the verification step.",
     ),
     force: bool = typer.Option(False, "--force", help=FORCE_HELP),
+    dry_run: bool = typer.Option(
+        False, DRY_RUN_FLAG, help="Show the pipeline plan without running any stage."
+    ),
     output: str | None = typer.Option(None, "--output", "-o", help=OUTPUT_HELP),
 ) -> None:
     """Run the default orchestration pipeline (detect → quick test → endurance)."""
@@ -2395,14 +2624,36 @@ def pipeline(  # noqa: C901
             stages = pipeline_mod.build_default_pipeline(profile_settings)
 
         negotiated_stage_plan = [stage.name for stage in stages]
-        # Guard once for the whole plan: a read-only plan (detect/health/summary)
-        # stays usable on a mounted card, anything that writes does not. The
-        # profile can supply force just as it does for the standalone endurance
-        # command, so honour both sources; --yes is still required either way.
-        if pipeline_mod.plan_is_destructive(negotiated_stage_plan):
-            _assert_device_safe(
-                ctx, target_device, force or bool(profile_settings.force)
+        # The profile can supply force just as it does for the standalone
+        # endurance command, so honour both sources; --yes is still required.
+        effective_force = force or bool(profile_settings.force)
+        plan_writes = pipeline_mod.plan_is_destructive(negotiated_stage_plan)
+
+        if _resolve_dry_run(ctx, dry_run):
+            _emit_dry_run(
+                ctx,
+                command_name,
+                target_device,
+                {
+                    "device": target_device.path,
+                    "stage_plan": negotiated_stage_plan,
+                    "requested_stages": requested_stages,
+                    "profile": profile_settings.name,
+                    "combo": combo_settings.name if combo_settings else None,
+                    "image_options": image_options,
+                    "force": effective_force,
+                    "writes_to_device": plan_writes,
+                },
+                actual_output,
+                force=effective_force,
+                check_safety=plan_writes,
             )
+            return
+
+        # Guard once for the whole plan: a read-only plan (detect/health/summary)
+        # stays usable on a mounted card, anything that writes does not.
+        if plan_writes:
+            _assert_device_safe(ctx, target_device, effective_force)
         results = pipeline_mod.run_pipeline(run_ctx, stages)
         aggregated_status = _aggregate_pipeline_status(results)
         stage_payloads = [result.model_dump() for result in results]
@@ -2537,31 +2788,31 @@ def workload_smallfiles_command(
             delete_after=delete_after,
             read_after_write=read_after_write,
         )
-        if dry_run:
-            plan: dict[str, object | None] = {
-                "device_path": target_device.path,
-                "file_count": cfg.file_count,
-                "file_size_bytes": cfg.file_size_bytes,
-                "working_directory": str(cfg.working_dir) if cfg.working_dir else None,
-                "delete_after": cfg.delete_after,
-                "read_after_write": cfg.read_after_write,
-            }
-            message = (
-                f"Dry run: small-file workload plan prepared for {target_device.path}."
-            )
-            resp = CLIResponse(
-                status="ok",
-                command=command_name,
-                message=message,
-                data={"plan": plan},
-            )
+        # Same rules the engine applies, so a dry run never advertises a plan
+        # the real invocation would refuse.
+        workload_smallfiles.validate_config(cfg)
 
-            if actual_output == "json":
-                print(resp.model_dump_json())
-                return
-
-            print(resp.message)
-            print(f"Plan: {plan}")
+        if _resolve_dry_run(ctx, dry_run):
+            _emit_dry_run(
+                ctx,
+                command_name,
+                target_device,
+                {
+                    "device_path": target_device.path,
+                    "file_count": cfg.file_count,
+                    "file_size_bytes": cfg.file_size_bytes,
+                    "working_directory": (
+                        str(cfg.working_dir) if cfg.working_dir else None
+                    ),
+                    "delete_after": cfg.delete_after,
+                    "read_after_write": cfg.read_after_write,
+                },
+                actual_output,
+                label="small-file workload",
+                # Writes through a mounted filesystem, so it is exempt from the
+                # unmounted-device guard; previewing a refusal would mislead.
+                check_safety=False,
+            )
             return
         run_ctx = RunContext(
             run_id=run_id,

@@ -12,10 +12,10 @@ uv run tfqa capabilities              # which test tools does this host have?
 uv run tfqa quick-test --device /dev/sdX --dry-run
 ```
 
-> **Status: early development.** The CLI surface, JSON schemas, and test harness are real and
-> working. Several test engines are still stubs, and the safety guardrail is not yet wired into
-> the commands that write to devices. Read [Safety](#safety) and
-> [Known limitations](#known-limitations) before pointing this at a card you care about.
+> **Status: early development.** The CLI surface, JSON schemas, safety guardrails, and test
+> harness are real and working. Several test engines are still stubs, and the health readings are
+> synthetic. Read [Safety](#safety) and [Known limitations](#known-limitations) before pointing
+> this at a card you care about.
 
 ---
 
@@ -123,16 +123,48 @@ Read-only paths stay usable on a mounted card: `surface-scan --mode readonly`, a
 stages are all non-writing, `detect`, `health`, and every reporting command. `workload-smallfiles`
 writes through a mounted filesystem, so it is intentionally exempt from the unmounted requirement.
 
-Also note: the global `--dry-run` flag is parsed but never read. Only the per-command `--dry-run`
-on `quick-test` and `workload-smallfiles` works, and it must come **after** the subcommand:
+### Dry runs
+
+Every command that writes accepts `--dry-run`, as a global flag before the subcommand or as the
+command's own flag after it. Both forms print the plan and execute nothing.
 
 ```bash
-uv run tfqa quick-test --device /dev/sdX --dry-run     # works
-uv run tfqa --dry-run pipeline --device /dev/sdX ...   # silently ignored, runs for real
+uv run tfqa --dry-run pipeline --device /dev/sdX --stages detect,quick-test
+uv run tfqa quick-test --device /dev/sdX --dry-run
 ```
 
-Until these are fixed, check `lsblk` yourself and unmount the card before running anything that
-writes.
+The plan carries a `safety` block reporting whether the real run would clear the guard, so you
+can find out that a card is mounted without attempting the write:
+
+```json
+{
+  "plan": {
+    "device": "/dev/sdX",
+    "stage_plan": ["detect", "quick-test"],
+    "writes_to_device": true,
+    "safety": {
+      "would_run": false,
+      "error_code": "DEVICE_UNSAFE",
+      "reason": "has active mountpoints. Use --force --yes ...",
+      "details": {
+        "device_path": "/dev/sdX",
+        "mountpoints": [{ "mountpoint": "/media/boot", "fstype": "vfat" }]
+      }
+    }
+  }
+}
+```
+
+The four `safety` keys are always present — on a clearing device they are
+`{"would_run": true, "error_code": null, "reason": null, "details": {}}` — so automation never
+has to handle two shapes.
+
+Commands that never clear the unmounted requirement (`workload-smallfiles`,
+`surface-scan --mode readonly`, read-only pipeline plans) omit the `safety` block rather than
+predict a refusal that does not apply.
+
+A dry run applies the same argument validation as a real run, so it will not hand back a plan the
+real invocation would reject (`--mode typo`, `--duration 0`, `--file-count 0`, …).
 
 ## Automation and AI
 
@@ -235,23 +267,21 @@ never touches real hardware.
 
 Honest list of what does not work yet. Contributions welcome.
 
-1. **The global `--dry-run` is ignored.** Parsed at `main.py:372`, stored at `:195`, read nowhere.
-   Only `quick-test` and `workload-smallfiles` have a working per-command `--dry-run`.
-2. **Default data directories resolve to a path that does not exist.**
+1. **Default data directories resolve to a path that does not exist.**
    `tfqa/orchestration/profile.py:20` and `workflows.py:18` point at `tfqa/data/`, but the files
    live in the repo-root `data/`. Out of the box `profiles` finds nothing, `combos` errors, and
    `pipeline` fails on `Profile 'default' not found`. Work around it with
    `--profiles-dir data/profiles` and `TFQA_WORKFLOWS_DIR=data/workflows`.
-3. **`data/profiles/router-telemetry.toml` is invalid TOML.** Its description is a basic string
+2. **`data/profiles/router-telemetry.toml` is invalid TOML.** Its description is a basic string
    spanning a newline; it needs `"""`. `list_profiles` swallows the parse error, so the profile
    silently disappears while `combos` still references it.
-4. **Health data is fabricated.** `tfqa/ext/mmc.py:26` returns a hardcoded mock
+3. **Health data is fabricated.** `tfqa/ext/mmc.py:26` returns a hardcoded mock
    (`FlashCrucibleMock`, `life_used_percent=5`), and `tfqa/ext/sdmon.py:55` has a matching stub.
    Nothing marks the output as synthetic, and the pipeline records these values into history and
    trends as if they were measured.
-5. **`full-capacity-test` is a stub.** `tfqa/tests/capacity/full.py:21` returns canned numbers
+4. **`full-capacity-test` is a stub.** `tfqa/tests/capacity/full.py:21` returns canned numbers
    without touching the device.
-6. **Pydantic deprecation warnings.** `tfqa/core/models.py` still uses class-based `Config`;
+5. **Pydantic deprecation warnings.** `tfqa/core/models.py` still uses class-based `Config`;
    migrating to `ConfigDict` is pending.
 
 ## Documentation

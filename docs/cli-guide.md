@@ -5,7 +5,7 @@ top of them. For a general introduction see the [README](../README.md); for the 
 behind the UX rules see [ux-v0.md](ux-v0.md).
 
 > Several sections below reference `data/profiles/` and `data/workflows/`. Because of a path bug
-> (README, *Known limitations* #2), the defaults resolve to a non-existent `tfqa/data/` directory.
+> (README, *Known limitations* #1), the defaults resolve to a non-existent `tfqa/data/` directory.
 > Pass `--profiles-dir data/profiles` or set `TFQA_WORKFLOWS_DIR=data/workflows` until it is fixed.
 
 ## Contents
@@ -33,6 +33,16 @@ FlashCrucible is an interactive CLI and treats UX as a requirement, not a polish
 - **Safety first.** Never default to a device; force explicit selection. Confirm destructive
   actions with loud prompts unless `--yes` / `--non-interactive` is set. Offer read-only and
   dry-run modes wherever possible.
+- **Dry runs.** Every command that writes accepts `--dry-run`, either globally
+  (`tfqa --dry-run <command>`) or as the command's own flag (`tfqa <command> --dry-run`). Both
+  print `CLIResponse.data.plan` and execute nothing. The plan carries a `safety` block reporting
+  whether the real run would clear the destructive-operation guard, so automation can check a
+  device without attempting a write. Its four keys — `would_run`, `error_code`, `reason`,
+  `details` — are always present, so there is only one shape to parse. Commands that never clear
+  the unmounted requirement — `workload-smallfiles`, `surface-scan --mode readonly`, read-only
+  `pipeline` plans — omit the block rather than predict an inapplicable refusal. A dry run applies
+  the same argument validation as a real run, so it never advertises a plan the real invocation
+  would reject.
 - **Destructive guardrails.** Every command that writes raw blocks calls
   `tfqa.core.safety.assert_safe_for_destructive`, which enforces that the device is neither a
   system disk nor currently mounted. On failure the CLI raises `DeviceUnsafeError` (error code
