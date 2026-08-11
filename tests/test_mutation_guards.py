@@ -16,16 +16,29 @@ import sys
 
 import pytest
 
-from tests.mutations import MUTANTS, Mutant
+from tests.mutations import MUTANTS
 
-#: Enough to prove the guard bites without paying for the whole file.
+#: Enough to prove the guard bites without paying for the whole file. `-x`
+#: stops at the first failure, which is all the proof needed and keeps the
+#: harness quick.
 TIMEOUT_SECONDS = 180
 
 
-def _run_guarded_tests(name: str, mutant: Mutant) -> subprocess.CompletedProcess[str]:
-    environment = {**os.environ, "TFQA_MUTATE": name}
-    # `-p no:randomly` keeps ordering stable, `-x` stops at the first failure:
-    # one is all the proof needed and it keeps the harness quick.
+def _pytest(
+    selection: tuple[str, ...], mutate: str | None
+) -> subprocess.CompletedProcess[str]:
+    """Run pytest in a child, mutated or explicitly not.
+
+    The variable is always set or always removed, never inherited: a developer
+    with `TFQA_MUTATE` exported would otherwise see the unmutated check run
+    mutated and fail for the wrong reason.
+    """
+
+    environment = {**os.environ}
+    if mutate:
+        environment["TFQA_MUTATE"] = mutate
+    else:
+        environment.pop("TFQA_MUTATE", None)
     return subprocess.run(
         [
             sys.executable,
@@ -34,9 +47,10 @@ def _run_guarded_tests(name: str, mutant: Mutant) -> subprocess.CompletedProcess
             "-x",
             "-q",
             "--no-header",
+            # No cache writes from a child run inside another test run.
             "-p",
             "no:cacheprovider",
-            *mutant.guarded_by,
+            *selection,
         ],
         capture_output=True,
         text=True,
@@ -49,7 +63,7 @@ def _run_guarded_tests(name: str, mutant: Mutant) -> subprocess.CompletedProcess
 @pytest.mark.parametrize("name", sorted(MUTANTS))
 def test_breaking_the_predicate_breaks_the_suite(name: str) -> None:
     mutant = MUTANTS[name]
-    result = _run_guarded_tests(name, mutant)
+    result = _pytest(mutant.guarded_by, name)
 
     assert result.returncode != 0, (
         f"Breaking {mutant.target} changed nothing: {', '.join(mutant.guarded_by)} "
@@ -62,14 +76,8 @@ class TestTheHarnessItself:
 
     def test_the_guarded_tests_pass_unmutated(self) -> None:
         # Otherwise a mutant would "pass" because the tests were already red.
-        files = sorted({path for m in MUTANTS.values() for path in m.guarded_by})
-        result = subprocess.run(
-            [sys.executable, "-m", "pytest", "-q", "--no-header", *files],
-            capture_output=True,
-            text=True,
-            timeout=TIMEOUT_SECONDS,
-            check=False,
-        )
+        files = tuple(sorted({path for m in MUTANTS.values() for path in m.guarded_by}))
+        result = _pytest(files, None)
         assert result.returncode == 0, result.stdout[-2000:]
 
     def test_every_mutant_names_files_that_exist(self) -> None:

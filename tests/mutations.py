@@ -30,6 +30,24 @@ class Mutant:
     consequence: str
 
 
+def _normalize_status_defaulting_to_ok(raw_status: Any | None = None) -> str:
+    """`normalize_status` with only its unknown-value fallback reversed.
+
+    The mapping of every recognised value is kept, so the one test this mutant
+    must break is the one asserting an unrecognised value becomes "error".
+    """
+
+    from tfqa.orchestration import pipeline
+
+    if raw_status is None:
+        return "ok"
+    candidate = str(raw_status).lower().strip()
+    candidate = pipeline._STATUS_SYNONYMS.get(candidate, candidate)
+    if candidate in pipeline._VALID_STATUSES:
+        return candidate
+    return "ok"  # the regression: "we do not know that it succeeded"
+
+
 def _resolve(target: str) -> tuple[Any, str]:
     module_path, _, attribute = target.rpartition(".")
     module = __import__(module_path, fromlist=[attribute])
@@ -53,8 +71,15 @@ MUTANTS: dict[str, Mutant] = {
     ),
     "unknown-status-becomes-ok": Mutant(
         target="tfqa.orchestration.pipeline.normalize_status",
-        replacement=lambda raw_status=None: "ok",
-        guarded_by=("tests/test_orchestration_pipeline.py",),
+        # Only the unknown branch changes. Mapping *everything* to "ok" would
+        # be caught by the canonical-value tests, so the harness would report
+        # this predicate as guarded even if the assertion that actually
+        # matters -- unknown becomes "error" -- were deleted.
+        replacement=_normalize_status_defaulting_to_ok,
+        guarded_by=(
+            "tests/test_orchestration_pipeline.py::TestNormalizeStatus"
+            "::test_unknown_status_is_an_error_not_a_pass",
+        ),
         consequence=(
             "A counterfeit detected inside a pipeline is recorded as a passing "
             "stage. This was real, and shipped."
@@ -64,7 +89,7 @@ MUTANTS: dict[str, Mutant] = {
         target="tfqa.tests.capacity.full._decode_offset",
         # A wrapping counterfeit is only distinguishable from ordinary
         # corruption by the offset the block claims to hold.
-        replacement=lambda block, span: None,
+        replacement=lambda block, span=None: None,
         # The node id, not the file: with `-x` a file-level selection stops at
         # the unit test of the helper, which proves less than the behaviour.
         guarded_by=(
