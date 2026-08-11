@@ -245,7 +245,10 @@ prints human-friendly summaries plus detailed metrics under `--output json`.
 
 ## Surface scan and performance instrumentation
 
-`surface-scan` tracks per-pass coverage, latency, and `badblocks` output, and keeps a per-run
+`surface-scan` reports what `badblocks` found: the bad-block count parsed from its summary line,
+the block numbers it listed, and the wall-clock duration. `--mode readonly` passes no write flag,
+since badblocks is read-only by default; `--mode destructive` passes `-w`. There is no latency
+metric because badblocks does not report one. Earlier versions tracked per-pass coverage and latency, and keeps a per-run
 health snapshot (MMC + `sdmon`) inside the response.
 
 `performance` prefers `fio` (sequential or random) to report throughput, latency, and IOPS, and

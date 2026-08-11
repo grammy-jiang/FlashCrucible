@@ -1,4 +1,4 @@
-"""Simulated random I/O performance runner for Phase 2 benchmarks."""
+"""Random I/O performance runner, measured with fio."""
 
 from __future__ import annotations
 
@@ -57,7 +57,12 @@ def run_random_performance(
     rw_mix: str = "randrw",
     random_read_percentage: int = 50,
 ) -> RandomPerformanceResult:
-    """Simulate random I/O performance metrics."""
+    """Measure random I/O performance with fio.
+
+    Raises ToolNotFoundError when fio is absent. There is no estimate: the
+    former fallback computed throughput from block size and queue depth and
+    reported it as a measurement.
+    """
 
     read_percentage = _clamp_percentage(random_read_percentage)
     try:

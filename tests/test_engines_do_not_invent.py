@@ -26,7 +26,13 @@ from unittest.mock import patch
 
 import pytest
 
-from tfqa.core.errors import NotImplementedEngineError, TFQAError, ToolNotFoundError
+from tfqa.core.errors import (
+    NotImplementedEngineError,
+    RuntimeIOError,
+    TFQAError,
+    TimeoutError,
+    ToolNotFoundError,
+)
 from tfqa.core.models import DeviceInfo, EnduranceConfig, RunContext
 from tfqa.orchestration import pipeline as pipeline_mod
 from tfqa.orchestration.profile import EnduranceProfile
@@ -130,10 +136,10 @@ class TestNoSyntheticFallbacksRemain:
 
     @pytest.mark.parametrize("module", ENGINE_MODULES, ids=lambda m: m.__name__)
     def test_a_missing_tool_is_always_re_raised(self, module: object) -> None:
-        handlers = self._tool_handlers(module)
-        assert handlers, f"{module.__name__} no longer guards against a missing tool"  # type: ignore[attr-defined]
-
-        for handler in handlers:
+        # Not catching at all is equally compliant -- the error propagates and
+        # no fallback can exist -- so this only checks the handlers that are
+        # there. The runtime tests above assert the errors actually propagate.
+        for handler in self._tool_handlers(module):
             body = [n for n in handler.body if not isinstance(n, ast.Pass)]
             assert len(body) == 1 and isinstance(body[0], ast.Raise), (
                 f"{module.__name__} handles ToolNotFoundError with something other "  # type: ignore[attr-defined]
@@ -182,6 +188,25 @@ class TestPipelineRecordsSkippedNotOk:
         assert result.status == "skipped"
         assert result.details["error_code"] == "NOT_IMPLEMENTED"
         assert result.metrics == {}
+
+    def test_a_real_failure_is_not_disguised_as_skipped(self) -> None:
+        # Only a capability gap becomes "skipped". A tool that ran and failed
+        # is a real error and must not let the pipeline quietly continue.
+        stage = pipeline_mod.build_pipeline(PROFILE, ["performance"])[0]
+        with patch(
+            "tfqa.ext.fio.run_fio_job", side_effect=RuntimeIOError("fio blew up", {})
+        ):
+            with pytest.raises(RuntimeIOError):
+                pipeline_mod.run_pipeline(_context(), [stage])
+
+    def test_a_timeout_is_not_disguised_as_skipped(self) -> None:
+        stage = pipeline_mod.build_pipeline(PROFILE, ["surface-scan"])[0]
+        with patch(
+            "tfqa.ext.badblocks.run_badblocks_readonly",
+            side_effect=TimeoutError("badblocks timed out", 1.0, {}),
+        ):
+            with pytest.raises(TimeoutError):
+                pipeline_mod.run_pipeline(_context(), [stage])
 
     def test_a_skipped_stage_contributes_no_metrics_to_trends(self) -> None:
         # The whole point: an unavailable engine must not put a number into the

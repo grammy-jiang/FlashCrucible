@@ -20,7 +20,7 @@ uv run tfqa capabilities              # which test tools does this host have?
 uv run tfqa quick-test --device /dev/sdX --dry-run
 ```
 
-> **Status: alpha.** 23 commands, 334 tests, typed and linted in CI. The safety guardrails,
+> **Status: alpha.** 23 commands, 350 tests, typed and linted in CI. The safety guardrails,
 > dry-run previews, and JSON contract all do what they say. No engine reports a number it did
 > not measure: one that cannot do real work refuses rather than estimating. Read
 > [Safety](#safety) and [Known limitations](#known-limitations) before pointing this at a card
@@ -49,7 +49,7 @@ commands and read the same results.
 | `capabilities` | Probe which external tools are installed | No |
 | `quick-test` | Fast counterfeit / capacity check via `f3probe` | **Yes** |
 | `full-capacity-test` | Destructive full-span write + verify, detects wrapping fakes | **Yes** |
-| `surface-scan` | Bad-block sweep via `badblocks`, with health snapshot | **Yes** |
+| `surface-scan` | Bad-block sweep via `badblocks` (required) | Only `--mode destructive` |
 | `performance` | Throughput / latency / IOPS via `fio` (required) | **Yes** |
 | `endurance` | Burn-in loop — **not implemented**, refuses to run | — |
 | `workload-smallfiles` | Small-file create/read/delete metadata stress | **Yes** |
@@ -286,6 +286,8 @@ Honest list of what is constrained. Contributions welcome.
    [#17](https://github.com/grammy-jiang/FlashCrucible/issues/17) first.
 2. **Some commands need their tool present.** `performance` requires `fio` and `surface-scan`
    requires `badblocks`; without them they report the tool as missing instead of estimating.
+   `surface-scan` reports the bad-block count badblocks actually found, and no latency figure,
+   because badblocks does not measure one.
    Run `tfqa capabilities` to see what this host can do. In a `pipeline` an unavailable stage is
    recorded as `skipped`, so one missing tool does not fail an otherwise good run.
 3. **Health data needs the right hardware.** Wear data comes from eMMC `EXT_CSD` registers

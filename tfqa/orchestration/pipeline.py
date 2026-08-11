@@ -8,7 +8,11 @@ from pathlib import Path
 import logging
 from typing import Any, Callable, Iterable, Literal, cast
 
-from tfqa.core.errors import ArgumentError, TFQAError
+from tfqa.core.errors import (
+    ArgumentError,
+    NotImplementedEngineError,
+    ToolNotFoundError,
+)
 from tfqa.core.logging import emit_event
 from tfqa.core.models import (
     DeviceInfo,
@@ -84,12 +88,15 @@ DEFAULT_STAGE_ORDER = [
 #   workload-smallfiles  writes through a mounted filesystem, so demanding an
 #                    unmounted device would make it unrunnable.
 #   detect / health / summary  read only.
+#   endurance        does no device I/O at all right now -- it refuses with
+#                    NOT_IMPLEMENTED -- so classifying it destructive only made
+#                    a mounted card return DEVICE_UNSAFE before the caller could
+#                    learn the engine does not exist. Put it back when it writes.
 DESTRUCTIVE_STAGES = frozenset(
     {
         "quick-test",
         "full-capacity-test",
         "performance",
-        "endurance",
         "image",
         "image-flash",
     }
@@ -252,7 +259,7 @@ def _endurance_stage(profile: EnduranceProfile) -> PipelineStage:
         )
         try:
             result = endurance_simple.run_simple_endurance(ctx, config)
-        except TFQAError as exc:
+        except CAPABILITY_ERRORS as exc:
             return _skipped(exc.message, exc.error_code, exc.details)
         return result.model_dump()
 
@@ -269,7 +276,7 @@ def _full_stage(ctx: RunContext) -> dict[str, Any]:
 def _surface_stage(ctx: RunContext) -> dict[str, Any]:
     try:
         return cast(dict[str, Any], surface_scan.run_surface_scan(ctx.device))
-    except TFQAError as exc:
+    except CAPABILITY_ERRORS as exc:
         return _skipped(exc.message, exc.error_code, exc.details)
 
 
@@ -286,6 +293,13 @@ def _filesystem_check_stage(ctx: RunContext) -> dict[str, Any]:
         },
         "details": {"fsck": result.model_dump()},
     }
+
+
+# Only a *capability* gap becomes a skipped stage: the tool is absent, or the
+# engine does not exist. A tool that ran and failed -- a non-zero exit, a
+# timeout, an unreadable device -- is a real error and must stay one, or the
+# pipeline would quietly continue past a genuine problem.
+CAPABILITY_ERRORS = (ToolNotFoundError, NotImplementedEngineError)
 
 
 def _skipped(reason: str, error_code: str, details: dict[str, Any]) -> dict[str, Any]:
@@ -307,7 +321,7 @@ def _skipped(reason: str, error_code: str, details: dict[str, Any]) -> dict[str,
 def _performance_stage(ctx: RunContext) -> dict[str, Any]:
     try:
         return cast(dict[str, Any], perf_basic.run_seq_performance(ctx.device))
-    except TFQAError as exc:
+    except CAPABILITY_ERRORS as exc:
         return _skipped(exc.message, exc.error_code, exc.details)
 
 

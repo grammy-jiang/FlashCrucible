@@ -40,7 +40,10 @@ class PerformanceResult(TypedDict):
 def run_seq_performance(
     device: DeviceInfo, *, duration_seconds: float = 30.0
 ) -> PerformanceResult:
-    """Simulate a sequential performance test."""
+    """Measure sequential performance with fio.
+
+    Raises ToolNotFoundError when fio is absent; there is no estimate.
+    """
 
     details: dict[str, object] = {
         "sampled_at": device.path,
