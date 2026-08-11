@@ -135,6 +135,55 @@ def test_list_profiles_reports_an_invalid_value(tmp_path: Path) -> None:
     assert entry["error"]
 
 
+# tomllib decodes the file as UTF-8 before parsing anything, so this raises
+# UnicodeDecodeError rather than a TOML error. It is a ValueError subclass, so
+# a narrow `except TOMLDecodeError` misses it.
+INVALID_UTF8 = b'name = "x"\ndescription = "\xff\xfe"\n'
+
+# Valid TOML, but the value type is wrong: from_dict's float() coercion raises
+# ValueError, which never reaches an ArgumentError handler.
+WRONG_VALUE_TYPE = 'name = "y"\n[tests.endurance]\nduration_seconds = "abc"\n'
+
+
+@pytest.mark.parametrize(
+    "filename,payload",
+    [
+        ("badbytes.toml", INVALID_UTF8),
+        ("badtype.toml", WRONG_VALUE_TYPE),
+    ],
+)
+def test_unloadable_profile_raises_argument_error(
+    tmp_path: Path, filename: str, payload: bytes | str
+) -> None:
+    target = tmp_path / filename
+    if isinstance(payload, bytes):
+        target.write_bytes(payload)
+    else:
+        target.write_text(payload)
+
+    with pytest.raises(ArgumentError) as excinfo:
+        profile_mod.load_profile(target.stem, ConfigModel(profiles_dir=tmp_path))
+
+    assert excinfo.value.error_code == "INVALID_ARGUMENT"
+    assert filename in excinfo.value.details["path"]
+
+
+def test_one_unreadable_profile_does_not_hide_the_rest(tmp_path: Path) -> None:
+    # A narrow exception tuple let these abort the whole scan, so `profiles`
+    # returned INTERNAL_ERROR and omitted every valid preset.
+    (tmp_path / "a-badbytes.toml").write_bytes(INVALID_UTF8)
+    (tmp_path / "b-badtype.toml").write_text(WRONG_VALUE_TYPE)
+    (tmp_path / "c-good.toml").write_text('name = "c-good"\n')
+
+    entries = profile_mod.list_profiles(ConfigModel(profiles_dir=tmp_path))
+    by_name = {entry["name"]: entry for entry in entries}
+
+    assert set(by_name) == {"a-badbytes", "b-badtype", "c-good"}
+    assert by_name["a-badbytes"]["error"]
+    assert by_name["b-badtype"]["error"]
+    assert by_name["c-good"]["error"] is None
+
+
 def test_every_bundled_profile_parses() -> None:
     # Guards the shipped presets: router-telemetry.toml was broken on disk and
     # nothing noticed.
