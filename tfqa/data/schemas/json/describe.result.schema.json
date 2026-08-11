@@ -1,0 +1,82 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://flashcrucible.local/schemas/describe.result.schema.json",
+  "title": "tfqa describe result",
+  "description": "Argument and safety metadata for one command. Validates CLIResponse.data for `tfqa describe`; the envelope itself is cli_response.schema.json.",
+  "schema_version": 1,
+  "type": "object",
+  "properties": {
+    "describe": {
+      "type": "object",
+      "required": [
+        "name",
+        "destructive",
+        "requires_root",
+        "required_tools",
+        "optional_tools",
+        "arguments",
+        "options"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "destructive": {
+          "type": "boolean"
+        },
+        "destructive_when": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "requires_root": {
+          "type": "boolean"
+        },
+        "required_tools": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "optional_tools": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "degradation": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "result_schema": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "arguments": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      }
+    }
+  },
+  "additionalProperties": true,
+  "required": [
+    "describe"
+  ]
+}

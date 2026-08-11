@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://flashcrucible.local/schemas/describe-schemas.result.schema.json",
+  "title": "tfqa describe-schemas result",
+  "description": "The JSON schemas shipped with the package. Validates CLIResponse.data for `tfqa describe-schemas`; the envelope itself is cli_response.schema.json.",
+  "schema_version": 1,
+  "type": "object",
+  "properties": {
+    "schemas": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "directory": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": true,
+  "required": [
+    "schemas"
+  ]
+}

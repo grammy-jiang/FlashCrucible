@@ -240,6 +240,20 @@ def _collect_command_map() -> dict[str, click.Command]:
     return mapping
 
 
+def _result_schema_name(command_name: str) -> str | None:
+    """The schema describing this command's `data` payload, if one ships.
+
+    `cli_response.schema.json` constrains the envelope but leaves `data` open,
+    so without this a caller could confirm a response was a CLIResponse but not
+    that it was a valid `quick-test` result.
+    """
+
+    candidate = f"{command_name.replace(' ', '-')}.result.schema.json"
+    if (paths.DEFAULT_SCHEMAS_DIR / candidate).is_file():
+        return candidate
+    return None
+
+
 def _describe_click_command(full_name: str, command: click.Command) -> dict[str, Any]:
     metadata: dict[str, Any] = {
         "name": full_name,
@@ -247,10 +261,12 @@ def _describe_click_command(full_name: str, command: click.Command) -> dict[str,
         "destructive": False,
         "requires_root": False,
         "destructive_when": None,
+        "result_schema": None,
         "arguments": [],
         "options": [],
     }
     metadata.update(_DESCRIBE_OVERRIDES.get(full_name, {}))
+    metadata["result_schema"] = _result_schema_name(full_name)
     requirements = _TOOL_REQUIREMENTS.get(full_name, {})
     metadata["required_tools"] = list(requirements.get("required_tools", []))
     metadata["optional_tools"] = list(requirements.get("optional_tools", []))
@@ -378,6 +394,10 @@ def _emit_dry_run(
     device (workload-smallfiles), where a refusal preview would be misleading.
     """
 
+    # Guarantee the key rather than relying on each command to include it:
+    # workload-smallfiles used `device_path` while everything else used
+    # `device`, so a caller could not read the target out of a plan uniformly.
+    plan = {"device": device.path, **plan}
     if check_safety:
         plan = {
             **plan,

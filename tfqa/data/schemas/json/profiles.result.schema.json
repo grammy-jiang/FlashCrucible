@@ -1,0 +1,56 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://flashcrucible.local/schemas/profiles.result.schema.json",
+  "title": "tfqa profiles result",
+  "description": "Endurance profile presets. A preset that cannot be parsed carries an error. Validates CLIResponse.data for `tfqa profiles`; the envelope itself is cli_response.schema.json.",
+  "schema_version": 1,
+  "type": "object",
+  "properties": {
+    "profiles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "path"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duration_seconds": {
+            "type": "number"
+          },
+          "pass_count": {
+            "type": "integer"
+          },
+          "force": {
+            "type": "boolean"
+          },
+          "write_pattern": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "additionalProperties": true,
+  "required": [
+    "profiles"
+  ]
+}

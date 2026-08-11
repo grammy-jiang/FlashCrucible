@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://flashcrucible.local/schemas/config-validate.result.schema.json",
+  "title": "tfqa config validate result",
+  "description": "Whether the merged configuration is usable. Validates CLIResponse.data for `tfqa config validate`; the envelope itself is cli_response.schema.json.",
+  "schema_version": 1,
+  "type": "object",
+  "properties": {
+    "config": {
+      "type": "object"
+    },
+    "valid": {
+      "type": "boolean"
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": true
+}

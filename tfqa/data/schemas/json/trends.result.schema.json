@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://flashcrucible.local/schemas/trends.result.schema.json",
+  "title": "tfqa trends result",
+  "description": "Aggregated metrics across recorded runs. Validates CLIResponse.data for `tfqa trends`; the envelope itself is cli_response.schema.json.",
+  "schema_version": 1,
+  "type": "object",
+  "properties": {
+    "trends": {
+      "type": "object"
+    },
+    "stage_filter": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "limit": {
+      "type": "integer"
+    }
+  },
+  "additionalProperties": true,
+  "required": [
+    "trends"
+  ]
+}

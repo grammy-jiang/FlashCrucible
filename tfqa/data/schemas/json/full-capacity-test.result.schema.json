@@ -1,0 +1,93 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://flashcrucible.local/schemas/full-capacity-test.result.schema.json",
+  "title": "tfqa full-capacity-test result",
+  "description": "Destructive full-span write and verify. Validates CLIResponse.data for `tfqa full-capacity-test`; the envelope itself is cli_response.schema.json.",
+  "schema_version": 1,
+  "type": "object",
+  "properties": {
+    "metrics": {
+      "type": "object",
+      "description": "Measured values only. An engine that cannot measure refuses.",
+      "additionalProperties": {
+        "type": [
+          "number",
+          "integer",
+          "boolean",
+          "string"
+        ]
+      }
+    },
+    "details": {
+      "type": "object"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "fail",
+        "skipped",
+        "warning",
+        "error"
+      ]
+    },
+    "device": {
+      "type": "object"
+    },
+    "plan": {
+      "type": "object",
+      "description": "What the command would do; present only under --dry-run.",
+      "required": [
+        "device"
+      ],
+      "properties": {
+        "safety": {
+          "type": "object",
+          "required": [
+            "would_run",
+            "error_code",
+            "reason",
+            "details"
+          ],
+          "properties": {
+            "would_run": {
+              "type": "boolean"
+            },
+            "error_code": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "details": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "coverage_percent": {
+      "type": "number"
+    },
+    "duration_seconds": {
+      "type": "number"
+    },
+    "throughput_mbps": {
+      "type": "number"
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": true
+}

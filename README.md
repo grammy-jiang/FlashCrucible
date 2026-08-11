@@ -197,7 +197,9 @@ TFQA_MODE=ai uv run tfqa detect     # shorthand for --output json --non-interact
 
 Discovery hooks let an agent learn the CLI without hardcoding it:
 
-- `tfqa describe <command> --output json` — arguments, defaults, destructive flag, privileges
+- `tfqa describe <command> --output json` — arguments, defaults, destructive flag and the
+  conditions under which it applies, required and optional tools, and the `result_schema` that
+  validates the command's `data` payload
 - `tfqa describe-schemas --output json` — every shipped JSON schema with title and version
 - `tfqa capabilities --output json` — which tools and features are available on this host
 

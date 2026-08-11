@@ -1,0 +1,78 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://flashcrucible.local/schemas/image-flash.result.schema.json",
+  "title": "tfqa image-flash result",
+  "description": "Image written with dd and verified with cmp. Validates CLIResponse.data for `tfqa image-flash`; the envelope itself is cli_response.schema.json.",
+  "schema_version": 1,
+  "type": "object",
+  "properties": {
+    "metrics": {
+      "type": "object",
+      "description": "Measured values only. An engine that cannot measure refuses.",
+      "additionalProperties": {
+        "type": [
+          "number",
+          "integer",
+          "boolean",
+          "string"
+        ]
+      }
+    },
+    "details": {
+      "type": "object"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "fail",
+        "skipped",
+        "warning",
+        "error"
+      ]
+    },
+    "device": {
+      "type": "object"
+    },
+    "plan": {
+      "type": "object",
+      "description": "What the command would do; present only under --dry-run.",
+      "required": [
+        "device"
+      ],
+      "properties": {
+        "safety": {
+          "type": "object",
+          "required": [
+            "would_run",
+            "error_code",
+            "reason",
+            "details"
+          ],
+          "properties": {
+            "would_run": {
+              "type": "boolean"
+            },
+            "error_code": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "details": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}
