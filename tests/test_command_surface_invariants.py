@@ -360,34 +360,23 @@ class TestDescribeAgreesWithTheCode:
 def _engine_refuses() -> bool:
     """Whether the endurance engine still declines to do any device I/O.
 
-    Asked of the engine itself rather than of a constant, because a constant is
-    the thing that goes stale. The device path is never opened: either the
-    engine raises before touching it, or it is implemented and this returns
-    False without a real run.
+    Read out of the source, not by calling it. Once the engine is implemented,
+    invoking it to compute a boolean would mean a test run writing to a device
+    -- `EnduranceConfig` defaults to five passes -- so the check has to be
+    structural. `_dry_run_branch_returns` above reads the tree for the same
+    reason.
     """
 
-    context = RunContext(
-        run_id="tripwire",
-        started_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
-        device=DeviceInfo(
-            path="/dev/null",
-            name="null",
-            size_bytes=0,
-            is_removable=True,
-            is_system_disk=False,
-            mountpoints=[],
-            transport="usb",
-        ),
+    tree = ast.parse(
+        textwrap.dedent(inspect.getsource(endurance_simple.run_simple_endurance))
     )
-    try:
-        endurance_simple.run_simple_endurance(context, EnduranceConfig())
-    except NotImplementedEngineError:
-        return True
-    except Exception:
-        # Implemented, and it failed for some other reason -- a zero-length
-        # device, no permission. Either way it no longer refuses by design.
-        return False
-    return False
+    return any(
+        isinstance(node, ast.Raise)
+        and isinstance(node.exc, ast.Call)
+        and isinstance(node.exc.func, ast.Name)
+        and node.exc.func.id == "NotImplementedEngineError"
+        for node in ast.walk(tree)
+    )
 
 
 class TestEnduranceExemptionExpires:
@@ -419,9 +408,33 @@ class TestEnduranceExemptionExpires:
         (found,) = [c for c in ALL_COMMANDS if c.name == "endurance"]
         return found
 
-    def test_the_exemption_is_recorded(self) -> None:
-        # The rest of this class is meaningless if the entry is simply gone.
-        assert "endurance" in GUARD_EXEMPT
+    def test_the_refusal_is_real_while_it_refuses(self) -> None:
+        """The source says it refuses; confirm the behaviour agrees.
+
+        Only while it refuses -- once implemented, calling it would write to a
+        device. `NotImplementedEngineError` is the only exception accepted: a
+        validation or setup regression must surface as itself rather than be
+        read as "implemented" and answered with four unrelated rewires.
+        """
+
+        if not _engine_refuses():
+            pytest.skip("implemented; calling it would write to the device")
+
+        context = RunContext(
+            run_id="tripwire",
+            started_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            device=DeviceInfo(
+                path="/dev/null",
+                name="null",
+                size_bytes=0,
+                is_removable=True,
+                is_system_disk=False,
+                mountpoints=[],
+                transport="usb",
+            ),
+        )
+        with pytest.raises(NotImplementedEngineError):
+            endurance_simple.run_simple_endurance(context, EnduranceConfig())
 
     def test_the_guard_is_called_exactly_when_the_engine_can_write(self) -> None:
         assert self._command.calls_guard is not _engine_refuses(), (
