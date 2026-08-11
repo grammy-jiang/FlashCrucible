@@ -4,6 +4,7 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any, Iterable, Sequence, cast
 
+from tfqa.core import paths
 from tfqa.core.errors import ArgumentError
 from tfqa.core.models import ConfigModel
 
@@ -15,13 +16,11 @@ except ModuleNotFoundError:
 toml = toml_impl
 
 WORKFLOWS_FILENAME = "structured-combos.toml"
-DEFAULT_WORKFLOWS_DIR = Path(__file__).resolve().parents[1] / "data" / "workflows"
+DEFAULT_WORKFLOWS_DIR = paths.DEFAULT_WORKFLOWS_DIR
 
 
 def _resolve_workflows_path(config: ConfigModel) -> Path:
-    candidate = getattr(config, "workflows_dir", None)
-    base_dir = Path(candidate) if candidate else DEFAULT_WORKFLOWS_DIR
-    return base_dir / WORKFLOWS_FILENAME
+    return paths.workflows_dir(config) / WORKFLOWS_FILENAME
 
 
 def _load_raw_combos(config: ConfigModel) -> list[dict[str, Any]]:

@@ -7,6 +7,11 @@ requires-python = ">=3.13"
 dependencies = [
     "pydantic>=2.0",
     "typer>=0.9",
+    # `describe` introspects the click command tree that typer builds, so click
+    # is a direct import in tfqa.cli.main. Typer used to pull it in, but 0.27
+    # dropped it from its dependencies, which left a fresh install crashing on
+    # `import click` before any command could run.
+    "click>=8.0",
     "rich>=13.0",
     "platformdirs>=4.0",
     "tomli>=2.0;python_version<'3.11'",
@@ -19,7 +24,17 @@ tfqa = "tfqa.cli.main:app"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["tfqa*"]
-exclude = ["tests*", "data*", "docs*", "scripts*"]
+exclude = ["tests*", "docs*", "scripts*"]
+
+# Profiles, workflow combos, and JSON schemas are read at runtime, so they have
+# to travel with the wheel. Without this the installed CLI cannot find any
+# profile and `pipeline` fails before it starts.
+[tool.setuptools.package-data]
+tfqa = [
+    "data/profiles/*.toml",
+    "data/workflows/*.toml",
+    "data/schemas/json/*.json",
+]
 
 [build-system]
 requires = ["setuptools>=61", "wheel"]

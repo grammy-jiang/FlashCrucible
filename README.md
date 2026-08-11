@@ -168,7 +168,7 @@ real invocation would reject (`--mode typo`, `--duration 0`, `--file-count 0`, â
 
 ## Automation and AI
 
-Every command returns the same envelope, defined by `data/schemas/json/cli_response.schema.json`:
+Every command returns the same envelope, defined by `tfqa/data/schemas/json/cli_response.schema.json`:
 
 ```json
 {
@@ -229,8 +229,8 @@ flowchart TD
 | `tfqa/ext/` | Thin wrappers around external binaries |
 | `tfqa/orchestration/` | Pipeline sequencing, endurance profiles, workflow combos |
 | `tfqa/reporting/` | Run history index, summaries, trend aggregation |
-| `data/schemas/json/` | 8 JSON schemas describing the output contract |
-| `data/profiles/`, `data/workflows/` | Endurance presets and curated stage combos |
+| `tfqa/data/schemas/json/` | 8 JSON schemas describing the output contract |
+| `tfqa/data/profiles/`, `tfqa/data/workflows/` | Endurance presets and curated stage combos |
 | `docs/` | Design notes, roadmap, tool study, UX requirements |
 
 ## Configuration
@@ -267,21 +267,16 @@ never touches real hardware.
 
 Honest list of what does not work yet. Contributions welcome.
 
-1. **Default data directories resolve to a path that does not exist.**
-   `tfqa/orchestration/profile.py:20` and `workflows.py:18` point at `tfqa/data/`, but the files
-   live in the repo-root `data/`. Out of the box `profiles` finds nothing, `combos` errors, and
-   `pipeline` fails on `Profile 'default' not found`. Work around it with
-   `--profiles-dir data/profiles` and `TFQA_WORKFLOWS_DIR=data/workflows`.
-2. **`data/profiles/router-telemetry.toml` is invalid TOML.** Its description is a basic string
+1. **`tfqa/data/profiles/router-telemetry.toml` is invalid TOML.** Its description is a basic string
    spanning a newline; it needs `"""`. `list_profiles` swallows the parse error, so the profile
    silently disappears while `combos` still references it.
-3. **Health data is fabricated.** `tfqa/ext/mmc.py:26` returns a hardcoded mock
+2. **Health data is fabricated.** `tfqa/ext/mmc.py:26` returns a hardcoded mock
    (`FlashCrucibleMock`, `life_used_percent=5`), and `tfqa/ext/sdmon.py:55` has a matching stub.
    Nothing marks the output as synthetic, and the pipeline records these values into history and
    trends as if they were measured.
-4. **`full-capacity-test` is a stub.** `tfqa/tests/capacity/full.py:21` returns canned numbers
+3. **`full-capacity-test` is a stub.** `tfqa/tests/capacity/full.py:21` returns canned numbers
    without touching the device.
-5. **Pydantic deprecation warnings.** `tfqa/core/models.py` still uses class-based `Config`;
+4. **Pydantic deprecation warnings.** `tfqa/core/models.py` still uses class-based `Config`;
    migrating to `ConfigDict` is pending.
 
 ## Documentation

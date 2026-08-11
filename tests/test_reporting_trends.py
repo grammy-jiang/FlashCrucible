@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 import unittest
-from pathlib import Path
 
 import jsonschema
 
+from tfqa.core import paths
 from tfqa.reporting import trends as trends_mod
 
 
@@ -37,13 +37,7 @@ def _build_entry(
     }
 
 
-SCHEMA_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "data"
-    / "schemas"
-    / "json"
-    / "trends.schema.json"
-)
+SCHEMA_PATH = paths.DEFAULT_SCHEMAS_DIR / "trends.schema.json"
 
 
 class TestReportingTrends(unittest.TestCase):

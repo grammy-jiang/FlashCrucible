@@ -24,6 +24,7 @@ from tfqa.core import capabilities as capabilities_mod
 from tfqa.core import config as cfg_mod
 from tfqa.core import devices as devices_mod
 from tfqa.core import logging as logging_mod
+from tfqa.core import paths
 from tfqa.core import safety as safety_mod
 from tfqa.core.errors import ArgumentError, TFQAError, get_exit_code
 from tfqa.core.models import (
@@ -2346,11 +2347,11 @@ def _push_automation_report(
 
 
 def _schema_default_directory() -> Path:
-    return Path(__file__).resolve().parents[2] / "data" / "schemas" / "json"
+    return paths.DEFAULT_SCHEMAS_DIR
 
 
 def _schema_directory_from_config(config: ConfigModel) -> Path:
-    return config.schemas_dir or _schema_default_directory()
+    return paths.schemas_dir(config)
 
 
 def _load_schema_metadata(config: ConfigModel) -> list[dict[str, Any]]:
