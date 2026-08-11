@@ -194,7 +194,12 @@ It is also the one most likely to be built too early. An MCP server is a thin pr
 underlying contract: without **E** the tool outputs are unvalidatable, and without **F** every
 long-running tool call times out. Building it first would bake both gaps into a second interface.
 
-*Effort: large. Value: high, but only after E and F. Do not start here.*
+**Done** in [#18](https://github.com/grammy-jiang/FlashCrucible/issues/18), after E and F, as
+`tfqa mcp-server`. It held to the projection: tool inputs come from `describe`, outputs are the
+shipped result schemas, and each call runs the real CLI as a subprocess so the safety guard has
+one implementation rather than two.
+
+*Effort: large. Value: high, but only after E and F.*
 
 ---
 
@@ -222,7 +227,9 @@ Phase 1 items are independent of each other and can be done in any order.
 - **Do not write more instructions.** The 34 KB Copilot file described a safety model the code did
   not implement. Length was not the problem; the absence of enforcement was. Prefer a check over a
   paragraph.
-- **Do not add an MCP server before the contract is complete.** See H.
+- **Do not let the MCP server grow its own logic.** It is a projection of the CLI; the moment it
+  decides anything about safety or output shape there are two implementations, and only one of
+  them is tested. See H.
 - **Do not soften the safety guards for agent convenience.** An agent that cannot run
   `full-capacity-test` on a mounted device is the guard working. The correct fix is a clearer
   error, not a wider default.

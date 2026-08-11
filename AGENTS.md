@@ -129,6 +129,7 @@ checks. Only the exemptions are written down, and each carries its reason.
 | `tfqa/ext/` | Thin wrappers around external binaries |
 | `tfqa/orchestration/` | Pipeline sequencing, endurance profiles, workflow combos |
 | `tfqa/reporting/` | Run history index, summaries, trend aggregation |
+| `tfqa/mcp/` | MCP server — a projection of the CLI, never a second implementation |
 | `tfqa/data/` | Profiles, workflow combos, JSON schemas — shipped inside the package |
 
 `tfqa/data/` lives inside the package deliberately: data outside it is not included in the wheel,
@@ -143,6 +144,12 @@ Every command returns the same envelope, defined by
 
 Changing an envelope field, an exit code, or a `data` key that automation reads is a breaking
 change. Say so in the pull request.
+
+The MCP server (`tfqa/mcp/`) publishes this same contract as tool schemas, derived from `describe`
+and from the shipped result schemas. Nothing there is written by hand: adding a CLI option adds an
+MCP parameter with no edit, and a copy would drift into telling agents something untrue. It runs
+the real CLI as a subprocess for the same reason — the decision to overwrite a card must have one
+implementation, not two.
 
 ## Working with hardware
 

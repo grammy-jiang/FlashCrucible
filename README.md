@@ -182,11 +182,11 @@ holding a connection open:
 
 ```bash
 uv run tfqa --yes full-capacity-test --device /dev/sdX --force --detach
-# {"run_id": "20260811T093157Z", "pid": 4321, "detached": true}
+# {"run_id": "20260811T093157Z-3f9c1a20", "pid": 4321, "detached": true}
 
-uv run tfqa status 20260811T093157Z
+uv run tfqa status 20260811T093157Z-3f9c1a20
 uv run tfqa status                    # every recent run
-uv run tfqa cancel 20260811T093157Z
+uv run tfqa cancel 20260811T093157Z-3f9c1a20
 ```
 
 The run records phase, byte progress, and its outcome to a state file beside its JSONL log, so
@@ -225,6 +225,35 @@ Discovery hooks let an agent learn the CLI without hardcoding it:
   validates the command's `data` payload
 - `tfqa describe-schemas --output json` — every shipped JSON schema with title and version
 - `tfqa capabilities --output json` — which tools and features are available on this host
+
+### MCP server
+
+Agents can call the commands natively instead of shelling out and parsing stdout:
+
+```bash
+uv run tfqa mcp-server        # speaks MCP over stdio
+```
+
+```json
+{
+  "mcpServers": {
+    "flashcrucible": { "command": "uv", "args": ["run", "tfqa", "mcp-server"] }
+  }
+}
+```
+
+Every command becomes one tool. Nothing is described twice: tool inputs are derived from
+`describe`, and each tool's `outputSchema` **is** the shipped result schema, so a result that
+validates against the tool contract is the same result the CLI promises.
+
+The tools run the real CLI as a subprocess, which is the point — the safety guard, the exit codes,
+and the envelope have one implementation rather than two. A destructive tool over MCP is exactly as
+hard to fire as the same command in a shell: it refuses without both `force` and `yes`, and the
+server never supplies either on the caller's behalf. Destructive tools carry `destructiveHint` and
+say so in their description.
+
+Long runs should pass `detach` and be polled with the `status` tool; a blocking call is bounded by
+`TFQA_MCP_TIMEOUT` (default 600s) so one long test cannot wedge the server.
 
 Exit codes are stable (`tfqa/core/error_codes.py`):
 

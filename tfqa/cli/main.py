@@ -3512,6 +3512,26 @@ def cancel_command(
         raise SystemExit(get_exit_code(e.error_code))
 
 
+@app.command(name="mcp-server")
+def mcp_server(ctx: typer.Context) -> None:
+    """Serve the commands as MCP tools over stdio.
+
+    Agents otherwise shell out and parse stdout. Each tool runs the real CLI as
+    a subprocess, so the safety guard and the JSON envelope come from the one
+    implementation that is already tested; the destructive tools refuse without
+    both `force` and `yes` exactly as they do on the command line.
+    """
+
+    # Imported here: the MCP layer reads the describe registry, which lives in
+    # this module, so a top-level import would be circular.
+    from tfqa.mcp.server import serve
+
+    try:
+        serve()
+    except KeyboardInterrupt:  # pragma: no cover - interactive shutdown
+        pass
+
+
 @app.command(name="capabilities")
 def capabilities(
     ctx: typer.Context,
