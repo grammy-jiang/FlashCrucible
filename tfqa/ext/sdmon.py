@@ -24,6 +24,7 @@ SdmonHealth = TypedDict(
         "power_on_count": int,
         "read_error_count": int,
         "write_error_count": int,
+        "spare_block_count": int,
         "temperature_celsius": int,
         "manufacture_date": str,
         "sdmon_version": str,
@@ -46,8 +47,12 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
         "lifeUsedPercent",
     ),
     "power_on_count": ("powerOnTimes", "power_on_times", "powerCycleCount"),
-    "read_error_count": ("readErrorCount", "read_error_count", "spareBlockCount"),
+    "read_error_count": ("readErrorCount", "read_error_count"),
     "write_error_count": ("writeErrorCount", "write_error_count"),
+    # Remaining reserve, not a failure count. Mapping it onto read_error_count
+    # inverted its meaning: a healthy card with a large spare pool looked like
+    # it had thousands of read errors, in snapshots and in trends.
+    "spare_block_count": ("spareBlockCount", "spare_block_count"),
     "temperature_celsius": ("temperature", "temperatureCelsius"),
     "manufacture_date": ("manufactureYM", "manufacture_ym", "manufactureDate"),
 }

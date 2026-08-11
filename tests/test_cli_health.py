@@ -57,7 +57,7 @@ def _snapshot(available: bool = True) -> dict[str, object]:
             "error_code": "RUNTIME_IO_ERROR",
             "reason": "Could not read EXT_CSD from /dev/sdb",
         }
-        details = {"device_path": "/dev/sdb", "identity_is_reader_not_card": True}
+        details = {"device_path": "/dev/sdb", "identity_is_not_card_cid": True}
 
     return {
         "source": "sysfs:mmc+mmc-utils" if available else "sysfs:scsi",
@@ -123,10 +123,13 @@ class HealthCLI(unittest.TestCase):
         self.assertIn("sdmon: unavailable", result.stdout)
         self.assertIn("Required tool not found: sdmon", result.stdout)
 
-    def test_health_human_output_flags_reader_identity(self) -> None:
+    def test_health_human_output_flags_non_card_identity(self) -> None:
+        # `is_card_identity` is False for any SCSI-style device, so the wording
+        # must not claim it is specifically a USB reader.
         result = self._invoke(_snapshot(available=False))
-        self.assertIn("Reader identity (not the card)", result.stdout)
-        self.assertIn("belongs to the USB reader", result.stdout)
+        self.assertIn("Device identity (no MMC CID available)", result.stdout)
+        self.assertIn("not the card's CID register", result.stdout)
+        self.assertNotIn("Reader identity", result.stdout)
 
     def test_health_runtime_failure(self) -> None:
         device = make_device("/dev/sdb")

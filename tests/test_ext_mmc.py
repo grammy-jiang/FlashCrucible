@@ -107,6 +107,49 @@ class ReadHealth(TestCase):
         with patch("shutil.which", return_value=None), pytest.raises(ToolNotFoundError):
             mmc.read_health("/dev/mmcblk0")
 
+    def test_undefined_estimates_raise_instead_of_claiming_health(self):
+        # 0x00 is the spec's "not defined". Recording life_time_exceeded=False
+        # for it made the snapshot report health as available with no reading.
+        output = (
+            "[EXT_CSD_DEVICE_LIFE_TIME_EST_TYP_A]: 0x00\n"
+            "[EXT_CSD_DEVICE_LIFE_TIME_EST_TYP_B]: 0x00\n"
+            "[EXT_CSD_PRE_EOL_INFO]: 0x00\n"
+        )
+        with (
+            patch("shutil.which", return_value="/usr/bin/mmc"),
+            patch("subprocess.run", return_value=_completed(output)),
+        ):
+            with pytest.raises(RuntimeIOError) as excinfo:
+                mmc.read_health("/dev/mmcblk0")
+
+        self.assertIn("no wear estimate", excinfo.value.message)
+
+    def test_one_defined_estimate_is_enough(self):
+        output = (
+            "[EXT_CSD_DEVICE_LIFE_TIME_EST_TYP_A]: 0x00\n"
+            "[EXT_CSD_DEVICE_LIFE_TIME_EST_TYP_B]: 0x02\n"
+        )
+        with (
+            patch("shutil.which", return_value="/usr/bin/mmc"),
+            patch("subprocess.run", return_value=_completed(output)),
+        ):
+            health = mmc.read_health("/dev/mmcblk0")
+
+        self.assertEqual(health["life_used_percent"], 20)
+
+    def test_pre_eol_alone_is_wear_data(self):
+        with (
+            patch("shutil.which", return_value="/usr/bin/mmc"),
+            patch(
+                "subprocess.run",
+                return_value=_completed("[EXT_CSD_PRE_EOL_INFO]: 0x03\n"),
+            ),
+        ):
+            health = mmc.read_health("/dev/mmcblk0")
+
+        self.assertEqual(health["pre_eol_state"], "urgent")
+        self.assertNotIn("life_used_percent", health)
+
     def test_output_without_wear_fields_raises(self):
         with (
             patch("shutil.which", return_value="/usr/bin/mmc"),

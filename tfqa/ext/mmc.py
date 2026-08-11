@@ -38,6 +38,13 @@ LIFE_TIME_EXCEEDED = 0x0B
 # EXT_CSD_PRE_EOL_INFO
 PRE_EOL_LABELS = {0x01: "normal", 0x02: "warning", 0x03: "urgent"}
 
+# Keys that constitute an actual wear reading. The raw life_time_est_typ_*
+# values are reported as facts even when they read 0x00 ("not defined"), so the
+# "did we learn anything?" check keys off these instead of dict length.
+WEAR_KEYS = frozenset(
+    {"life_used_percent", "life_time_exceeded", "pre_eol_info", "pre_eol_state"}
+)
+
 _EXTCSD_FIELD = re.compile(
     r"\[(?P<key>EXT_CSD_[A-Z0-9_]+)\]:\s*(?P<value>0x[0-9a-fA-F]+|\d+)"
 )
@@ -246,7 +253,10 @@ def read_health(device_path: str, *, timeout_seconds: float = 30.0) -> MmcHealth
     if typ_b is not None:
         health["life_time_est_typ_b"] = typ_b
 
-    estimates = [value for value in (typ_a, typ_b) if value is not None]
+    # 0x00 means "not defined" for all three registers, so a card that answers
+    # with zeros has supplied no wear estimate. Treating it as data would let
+    # the snapshot claim health is available when nothing was measured.
+    estimates = [value for value in (typ_a, typ_b) if value]
     if estimates:
         worst = max(estimates)
         health["life_time_exceeded"] = worst >= LIFE_TIME_EXCEEDED
@@ -254,14 +264,21 @@ def read_health(device_path: str, *, timeout_seconds: float = 30.0) -> MmcHealth
         if percent is not None:
             health["life_used_percent"] = percent
 
-    if pre_eol is not None:
+    if pre_eol:
         health["pre_eol_info"] = pre_eol
         health["pre_eol_state"] = PRE_EOL_LABELS.get(pre_eol, "unknown")
 
-    if len(health) == 1:  # only `source`
+    if not health.keys() & WEAR_KEYS:
         raise RuntimeIOError(
-            f"EXT_CSD from {device_path} contained no wear data",
-            {"device_path": device_path, "fields_found": sorted(fields)[:20]},
+            f"EXT_CSD from {device_path} reported no wear estimate",
+            {
+                "device_path": device_path,
+                "fields_found": sorted(fields)[:20],
+                "hint": (
+                    "The lifetime and pre-EOL registers read as 0x00, which the "
+                    "eMMC spec defines as 'not defined'."
+                ),
+            },
         )
 
     return health

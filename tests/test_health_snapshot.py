@@ -131,14 +131,14 @@ class HealthSnapshotTest(unittest.TestCase):
         snapshot = self._run(cid=dict(CARD_CID))
 
         self.assertTrue(snapshot["cid"]["is_card_identity"])
-        self.assertNotIn("identity_is_reader_not_card", snapshot["details"])
+        self.assertNotIn("identity_is_not_card_cid", snapshot["details"])
 
     def test_reader_identity_is_flagged(self):
         # A USB reader's model must not be recorded as the card's identity.
         snapshot = self._run(cid=dict(READER_CID))
 
         self.assertFalse(snapshot["cid"]["is_card_identity"])
-        self.assertTrue(snapshot["details"]["identity_is_reader_not_card"])
+        self.assertTrue(snapshot["details"]["identity_is_not_card_cid"])
 
     def test_identity_alone_is_not_health_data(self):
         snapshot = self._run(cid=dict(CARD_CID))

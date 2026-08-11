@@ -37,6 +37,7 @@ class HealthMetrics(TypedDict, total=False):
     power_on_count: int
     read_error_count: int
     write_error_count: int
+    spare_block_count: int
     temperature_celsius: int
     manufacture_date: str
 
@@ -100,9 +101,10 @@ def run_health_snapshot(device: DeviceInfo) -> HealthSnapshot:
     if cid:
         contributors.insert(0, str(cid.get("source", "sysfs")))
         if cid.get("is_card_identity") is False:
-            # The reader answered, not the card. Say so rather than let a
-            # reader model be recorded as the card's identity.
-            details["identity_is_reader_not_card"] = True
+            # Something answered, but not with an MMC CID -- a USB reader, or
+            # any other SCSI-style device. Flag it transport-agnostically so a
+            # reader or enclosure model is never recorded as card identity.
+            details["identity_is_not_card_cid"] = True
 
     return HealthSnapshot(
         source="+".join(contributors) if contributors else "none",

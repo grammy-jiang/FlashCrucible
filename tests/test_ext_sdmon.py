@@ -71,6 +71,21 @@ class MapFields(TestCase):
             sdmon.map_fields({"manufactureYM": "2021/3"})["manufacture_date"], "2021/3"
         )
 
+    def test_spare_blocks_are_not_counted_as_read_errors(self):
+        # spareBlockCount is remaining reserve, not failures. Mapping it onto
+        # read_error_count made a healthy card look like it had thousands of
+        # read errors, in snapshots and in trends.
+        mapped = sdmon.map_fields({"spareBlockCount": 4096})
+
+        self.assertEqual(mapped["spare_block_count"], 4096)
+        self.assertNotIn("read_error_count", mapped)
+
+    def test_real_read_errors_still_map(self):
+        mapped = sdmon.map_fields({"readErrorCount": 3, "spareBlockCount": 4096})
+
+        self.assertEqual(mapped["read_error_count"], 3)
+        self.assertEqual(mapped["spare_block_count"], 4096)
+
     def test_unrecognised_payload_maps_to_nothing(self):
         self.assertEqual(sdmon.map_fields({"somethingElse": 1}), {})
 

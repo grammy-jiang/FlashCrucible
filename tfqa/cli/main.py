@@ -2935,10 +2935,12 @@ def health(
             print(f"Source: {source}")
         cid = snapshot.get("cid") or {}
         if cid:
+            # `is_card_identity` is False for any SCSI-style device, not just a
+            # USB card reader, so the wording stays transport-agnostic.
             label = (
                 "CID"
                 if cid.get("is_card_identity")
-                else "Reader identity (not the card)"
+                else "Device identity (no MMC CID available)"
             )
             print(f"{label}:")
             for key, value in cid.items():
@@ -3001,10 +3003,11 @@ def _print_sdmon_details(details: dict[str, object]) -> None:
     version = details.get("sdmon_version")
     if version:
         print(f"sdmon version: {version}")
-    if details.get("identity_is_reader_not_card"):
+    if details.get("identity_is_not_card_cid"):
         print(
-            "Note: the identity above belongs to the USB reader, not the card. "
-            "Attach the card to an MMC host controller to read its CID."
+            "Note: the identity above comes from the block device (a reader or "
+            "enclosure), not the card's CID register. Attach the card to an MMC "
+            "host controller to read its CID."
         )
 
 

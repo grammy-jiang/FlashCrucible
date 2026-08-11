@@ -222,7 +222,7 @@ did not, and never fills a gap with a plausible number:
 | --- | --- |
 | `available` | `false` when no source produced wear data; `health` is then `{}` |
 | `source` | `+`-joined list of the sources that contributed, or `none` |
-| `cid` | Identity, with `is_card_identity` distinguishing the card from a USB reader |
+| `cid` | Identity; `is_card_identity` is `false` when the values come from the block device (a reader or enclosure) rather than the card's CID register |
 | `health` | Wear metrics — `life_used_percent`, `pre_eol_state`, `power_on_count`, … |
 | `sources` | Per-source `available` / `error_code` / `reason` |
 
@@ -232,10 +232,12 @@ Three real sources:
   CID register; a USB reader exposes only reader identity, reported with `is_card_identity: false`.
 - **`mmc extcsd read`** — eMMC `EXT_CSD` wear registers. `EXT_CSD_DEVICE_LIFE_TIME_EST_TYP_A/B`
   report 10% bands, so `life_used_percent` is the band's upper bound rather than a false precision;
-  `EXT_CSD_PRE_EOL_INFO` becomes `pre_eol_state` (`normal` / `warning` / `urgent`). Usually needs
-  root, and is eMMC-only.
+  `EXT_CSD_PRE_EOL_INFO` becomes `pre_eol_state` (`normal` / `warning` / `urgent`). `0x00` means
+  "not defined" in all three registers, and a card that answers with zeros counts as having
+  supplied no estimate. Usually needs root, and is eMMC-only.
 - **`sdmon`** — vendor CMD56 registers on industrial SD cards, parsed from its JSON output. The
-  unmapped fields are kept under `details.sdmon_raw`.
+  unmapped fields are kept under `details.sdmon_raw`. Note `spare_block_count` is remaining
+  reserve, not a failure count — it is deliberately separate from `read_error_count`.
 
 A consumer card in a USB reader can supply none of the wear sources, so `tfqa health` will report
 `available: false` and name each reason. That is the honest answer; it previously printed invented
