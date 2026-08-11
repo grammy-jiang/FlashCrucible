@@ -288,8 +288,10 @@ never measured can appear in a throughput trend, indistinguishable from a real o
 
 Until it is fixed: run `tfqa capabilities` to confirm `fio` is installed, or check
 `data.details.mode` before believing a `performance` result. This is the same class of problem as
-the fabricated health data that has since been removed, and it is next on the list — see
-[docs/agent-readiness.md](https://github.com/grammy-jiang/FlashCrucible/blob/master/docs/agent-readiness.md).
+the fabricated health data that has since been removed. Tracked as
+[#11](https://github.com/grammy-jiang/FlashCrucible/issues/11); see
+[docs/agent-readiness.md](https://github.com/grammy-jiang/FlashCrucible/blob/master/docs/agent-readiness.md)
+for the wider plan.
 
 ### Constraints
 

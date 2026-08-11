@@ -210,15 +210,22 @@ long-running tool call times out. Building it first would bake both gaps into a 
 
 ## Suggested order
 
-| Phase | Items | Rationale |
-| --- | --- | --- |
-| 0 | **F2** | A live correctness bug in output people act on; small |
-| 1 | **B**, **C**, **G** | Small, independent, immediately useful |
-| 2 | **A** | Turns the AGENTS.md rules into checks; highest development-side value |
-| 3 | **E** | Makes the output contract complete and verifiable |
-| 4 | **F** | Fixes the synchronous-only limitation |
-| 5 | **H** | Only once E and F are done |
-| — | **D** | Optional; worth it only for the critical predicates |
+Each item below is tracked as a GitHub issue, collected under
+[#20](https://github.com/grammy-jiang/FlashCrucible/issues/20).
+
+| Phase | Item | Issue | Rationale |
+| --- | --- | --- | --- |
+| 0 | **F2** | [#11](https://github.com/grammy-jiang/FlashCrucible/issues/11) | A live correctness bug in output people act on; small |
+| 1 | **B** | [#12](https://github.com/grammy-jiang/FlashCrucible/issues/12) | Currently run by hand; already caught a real host dependency |
+| 1 | **C** | [#13](https://github.com/grammy-jiang/FlashCrucible/issues/13) | Removes a recurring source of avoidable CI failures |
+| 1 | **G** | [#14](https://github.com/grammy-jiang/FlashCrucible/issues/14) | Small; removes guesswork for callers |
+| 2 | **A** | [#15](https://github.com/grammy-jiang/FlashCrucible/issues/15) | Turns the AGENTS.md rules into checks; highest development-side value |
+| 3 | **E** | [#16](https://github.com/grammy-jiang/FlashCrucible/issues/16) | Makes the output contract complete and verifiable |
+| 4 | **F** | [#17](https://github.com/grammy-jiang/FlashCrucible/issues/17) | Fixes the synchronous-only limitation |
+| 5 | **H** | [#18](https://github.com/grammy-jiang/FlashCrucible/issues/18) | Only once E and F are done |
+| — | **D** | [#19](https://github.com/grammy-jiang/FlashCrucible/issues/19) | Optional; worth it only for the critical predicates |
+
+Phase 1 items are independent of each other and can be done in any order.
 
 ## What not to do
 
