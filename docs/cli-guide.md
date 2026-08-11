@@ -16,6 +16,7 @@ behind the UX rules see [ux-v0.md](ux-v0.md).
 - [Discovery hooks](#discovery-hooks)
 - [Pipelines and combos](#pipelines-and-combos)
 - [Image flashing](#image-flashing)
+- [Full capacity test](#full-capacity-test)
 - [Small-file workload](#small-file-workload)
 - [Surface scan and performance instrumentation](#surface-scan-and-performance-instrumentation)
 - [Profiles and endurance metadata](#profiles-and-endurance-metadata)
@@ -185,6 +186,38 @@ uv run tfqa image-flash --device /dev/sdX --image-path ./golden.img \
 history entry, and populates the JSON envelope with the raw `run_image_flash` metrics plus the
 same `image_options` metadata the pipeline stage uses, making standalone flashes directly
 comparable with pipeline runs.
+
+## Full capacity test
+
+`tfqa full-capacity-test` writes a deterministic, offset-derived pattern across the whole device
+and reads it back. Because each block's content is a function of its own offset, a counterfeit card
+that silently wraps writes into a smaller physical area fails verification, and the offset recorded
+in the block that *was* returned shows where the write actually landed.
+
+```bash
+uv run tfqa --yes full-capacity-test --device /dev/sdX --force
+uv run tfqa full-capacity-test --device /dev/sdX --dry-run
+uv run tfqa --yes full-capacity-test --device /dev/sdX --force --limit-bytes $((1<<30))
+```
+
+- `--block-size` — bytes per I/O chunk (default 1 MiB).
+- `--limit-bytes` — test only the first N bytes, useful for a quick check on a large card.
+- `--seed` — changes the pattern, so a re-test writes different data to the same offsets.
+
+The verify pass drops the page cache with `POSIX_FADV_DONTNEED` and reopens the device first.
+Without that the kernel would serve the writes back from RAM and every card would pass.
+
+`details` reports `bytes_written`, `bytes_verified`, `tested_span_bytes`, `wrapped`, and up to
+`max_mismatches` entries naming the offset that failed and, where the header decodes to a plausible
+value, the `found_offset` the returned data belonged to.
+
+`estimated_real_size_bytes` appears **only** when the device stopped accepting writes, where
+`bytes_written` is an unambiguous answer. A wrapping device does not reveal its period this way, so
+the payload carries a `real_size_hint` pointing at `tfqa quick-test`, which runs f3probe's binary
+search instead of guessing.
+
+This command is destructive and needs write access to the raw block device, so it normally requires
+root and always clears the mounted/system-disk guard first.
 
 ## Small-file workload
 

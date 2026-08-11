@@ -1,8 +1,47 @@
+"""Destructive full-span write and verify.
+
+Writes a deterministic, offset-derived pattern across the whole device and
+reads it back. Because every block's content is a function of its own offset, a
+counterfeit card that silently wraps writes into a smaller physical area fails
+verification at the wrapped offsets, and the offset recorded in the block that
+*was* returned reveals where the write actually landed -- which gives an
+estimate of the real capacity.
+
+This replaces a stub that returned canned numbers (100% coverage, 120 MB/s)
+without touching the device.
+
+Two details matter for correctness:
+
+* The verify pass must not read from the page cache, or a fake card's writes
+  would be served back from RAM and every card would pass. The cache is dropped
+  with POSIX_FADV_DONTNEED and the device reopened before verifying.
+* Writing past a fake card's real capacity usually fails with EIO or ENOSPC.
+  That is itself a positive detection, not an error to abort on.
+"""
+
 from __future__ import annotations
 
-from typing import Literal, TypedDict
+import hashlib
+import os
+import struct
+import time
+from typing import Any, Callable, Literal, TypedDict
 
+from tfqa.core.errors import RuntimeIOError
 from tfqa.core.models import DeviceInfo
+
+DEFAULT_BLOCK_SIZE = 1024 * 1024
+_HEADER = struct.Struct("<QQ")  # offset, seed
+_DIGEST_SIZE = 32
+
+ProgressFn = Callable[[int, int], None]
+
+
+class Mismatch(TypedDict, total=False):
+    offset: int
+    expected_offset: int
+    found_offset: int
+    reason: str
 
 
 class FullCapacityResult(TypedDict):
@@ -15,21 +54,249 @@ class FullCapacityResult(TypedDict):
     details: dict[str, object]
 
 
+def block_pattern(offset: int, size: int, seed: int) -> bytes:
+    """Return the deterministic content a block at `offset` must hold.
+
+    The offset is encoded in the header so a mismatch can say where the data
+    that came back actually belongs, which is what exposes a wrapping card.
+    """
+
+    header = _HEADER.pack(offset, seed)
+    body = hashlib.blake2b(header, digest_size=_DIGEST_SIZE).digest()
+    filler = body * ((size - len(header)) // _DIGEST_SIZE + 1)
+    return header + filler[: size - len(header)]
+
+
+def _decode_offset(block: bytes, span: int | None = None) -> int | None:
+    """Recover the offset a block claims to hold, if it looks like one.
+
+    Corrupt data decodes to arbitrary integers -- all-0xFF bytes yield
+    2**64-1 -- so a value outside the tested span is rejected rather than
+    reported as though the device had returned a real block from elsewhere.
+    """
+
+    if len(block) < _HEADER.size:
+        return None
+    try:
+        offset, _seed = _HEADER.unpack(block[: _HEADER.size])
+    except struct.error:  # pragma: no cover - guard
+        return None
+    offset = int(offset)
+    if span is not None and offset >= span:
+        return None
+    return offset
+
+
+def _drop_cache(fd: int) -> None:
+    """Ask the kernel to forget the pages we just wrote.
+
+    Without this the verify pass reads back from RAM and a counterfeit card
+    passes cleanly.
+    """
+
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    fadvise = getattr(os, "posix_fadvise", None)
+    if fadvise is None:  # pragma: no cover - platform guard
+        return
+    try:
+        fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+    except OSError:  # pragma: no cover - best effort
+        pass
+
+
+def _write_pass(
+    path: str,
+    span: int,
+    block_size: int,
+    seed: int,
+    progress: ProgressFn | None,
+) -> tuple[int, list[str]]:
+    """Fill `span` bytes with the pattern. Returns (bytes written, issues)."""
+
+    issues: list[str] = []
+    written = 0
+    fd = os.open(path, os.O_WRONLY)
+    try:
+        while written < span:
+            size = min(block_size, span - written)
+            try:
+                chunk = block_pattern(written, size, seed)
+                os.write(fd, chunk)
+            except OSError as exc:
+                # A fake card typically starts refusing writes at its real size.
+                issues.append(
+                    f"write failed at offset {written} after "
+                    f"{written} bytes: {exc.strerror or exc}"
+                )
+                break
+            written += size
+            if progress:
+                progress(written, span)
+        _drop_cache(fd)
+    finally:
+        os.close(fd)
+    return written, issues
+
+
+def _verify_pass(
+    path: str,
+    span: int,
+    block_size: int,
+    seed: int,
+    max_mismatches: int,
+    progress: ProgressFn | None,
+) -> tuple[int, list[Mismatch], list[str]]:
+    """Read the span back and compare. Returns (verified, mismatches, issues)."""
+
+    issues: list[str] = []
+    mismatches: list[Mismatch] = []
+    verified = 0
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        offset = 0
+        while offset < span:
+            size = min(block_size, span - offset)
+            try:
+                actual = os.read(fd, size)
+            except OSError as exc:
+                issues.append(f"read failed at offset {offset}: {exc.strerror or exc}")
+                break
+            if len(actual) < size:
+                issues.append(
+                    f"short read at offset {offset}: got {len(actual)} of {size} bytes"
+                )
+                break
+            if actual != block_pattern(offset, size, seed):
+                if len(mismatches) < max_mismatches:
+                    found = _decode_offset(actual, span)
+                    entry = Mismatch(offset=offset, expected_offset=offset)
+                    if found is not None and found != offset:
+                        entry["found_offset"] = found
+                        entry["reason"] = (
+                            "block holds data written for a different offset, "
+                            "which is how a wrapping counterfeit behaves"
+                        )
+                    else:
+                        entry["reason"] = "block contents differ from the pattern"
+                    mismatches.append(entry)
+            else:
+                verified += size
+            offset += size
+            if progress:
+                progress(offset, span)
+    finally:
+        os.close(fd)
+    return verified, mismatches, issues
+
+
+def _estimate_real_size(written: int, span: int, wrapped: bool) -> int | None:
+    """Real capacity, but only when it can actually be justified.
+
+    A device that starts refusing writes has told us where its storage ends, so
+    `written` is a sound estimate. A device that *wraps* has not: every offset
+    reads back as some other offset's data, and recovering the period needs the
+    binary search that `f3probe` performs (via `tfqa quick-test`). Returning the
+    lowest mismatching offset looked like an answer but was typically 0.
+    """
+
+    if written < span:
+        return written
+    if wrapped:
+        return None
+    return None
+
+
 def run_full_capacity(
-    device: DeviceInfo, *, force: bool, yes: bool
+    device: DeviceInfo,
+    *,
+    force: bool,
+    yes: bool,
+    block_size: int = DEFAULT_BLOCK_SIZE,
+    limit_bytes: int | None = None,
+    seed: int = 0,
+    max_mismatches: int = 16,
+    progress: ProgressFn | None = None,
 ) -> FullCapacityResult:
-    """Return a safe stub result for a destructive full capacity test."""
+    """Write a pattern across the device and verify it reads back intact."""
+
+    if block_size <= 0:
+        raise RuntimeIOError("Block size must be positive", {"block_size": block_size})
+
+    span = device.size_bytes
+    if limit_bytes is not None:
+        span = min(span, limit_bytes)
+    if span <= 0:
+        raise RuntimeIOError(
+            "Device reports no capacity to test",
+            {"device_path": device.path, "size_bytes": device.size_bytes},
+        )
+
+    started = time.monotonic()
+    written, write_issues = _write_pass(device.path, span, block_size, seed, progress)
+    verified, mismatches, read_issues = _verify_pass(
+        device.path, written, block_size, seed, max_mismatches, progress
+    )
+    duration = time.monotonic() - started
+
+    issues = write_issues + read_issues
+    coverage = (verified / span * 100) if span else 0.0
+    # Both passes move `written` bytes, so throughput reflects the round trip.
+    throughput = (
+        (written + verified) / duration / (1024 * 1024) if duration > 0 else 0.0
+    )
+
+    wrapped = any("found_offset" in entry for entry in mismatches)
+    real_size = _estimate_real_size(written, span, wrapped)
+    if mismatches:
+        issues.append(
+            f"{len(mismatches)} block(s) failed verification"
+            + (" (device appears to wrap writes)" if wrapped else "")
+        )
+
+    status: Literal["ok", "fail"] = "ok" if not issues and verified == span else "fail"
+    if status == "ok":
+        message = (
+            f"Full capacity test passed: {verified} bytes written and verified "
+            f"on {device.path}."
+        )
+    elif wrapped:
+        message = (
+            f"Fake capacity detected on {device.path}: writes wrap before the "
+            f"reported {span} bytes."
+        )
+    else:
+        message = f"Full capacity test failed for {device.path}."
+
+    details: dict[str, Any] = {
+        "device_path": device.path,
+        "force_override": force,
+        "confirmation": yes,
+        "reported_size_bytes": device.size_bytes,
+        "tested_span_bytes": span,
+        "bytes_written": written,
+        "bytes_verified": verified,
+        "block_size": block_size,
+        "seed": seed,
+        "mismatches": mismatches,
+        "wrapped": wrapped,
+    }
+    if real_size is not None:
+        details["estimated_real_size_bytes"] = real_size
+    elif wrapped:
+        details["real_size_hint"] = (
+            "Writes wrap, so the real capacity cannot be derived from this "
+            "pass; run `tfqa quick-test`, which uses f3probe's binary search."
+        )
 
     return FullCapacityResult(
-        status="ok",
-        message="Simulated full capacity test completed successfully.",
-        coverage_percent=100.0,
-        duration_seconds=600.0,
-        throughput_mbps=120.0,
-        issues=[],
-        details={
-            "device_path": device.path,
-            "force_override": force,
-            "confirmation": yes,
-        },
+        status=status,
+        message=message,
+        coverage_percent=round(coverage, 2),
+        duration_seconds=round(duration, 3),
+        throughput_mbps=round(throughput, 2),
+        issues=issues,
+        details=details,
     )

@@ -44,10 +44,13 @@ class FullCapacityCLI(unittest.TestCase):
         }
 
         def run_full_capacity_stub(
-            _: DeviceInfo, *, force: bool, yes: bool
+            _: DeviceInfo, *, force: bool, yes: bool, **options: object
         ) -> FullCapacityResult:
             self.assertTrue(force)
             self.assertTrue(yes)
+            # The CLI now forwards the pattern/IO options to the engine.
+            self.assertIn("block_size", options)
+            self.assertIn("seed", options)
             return payload
 
         with (
@@ -94,7 +97,7 @@ class FullCapacityCLI(unittest.TestCase):
         }
 
         def run_full_capacity_failure(
-            _: DeviceInfo, *, force: bool, yes: bool
+            _: DeviceInfo, *, force: bool, yes: bool, **options: object
         ) -> FullCapacityResult:
             return payload
 

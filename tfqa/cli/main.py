@@ -1602,8 +1602,21 @@ def full_capacity_test(
     dry_run: bool = typer.Option(
         False, DRY_RUN_FLAG, help="Show the test plan without writing to the device."
     ),
+    block_size: int = typer.Option(
+        full_capacity.DEFAULT_BLOCK_SIZE,
+        "--block-size",
+        help="Bytes written per I/O chunk.",
+    ),
+    limit_bytes: int | None = typer.Option(
+        None,
+        "--limit-bytes",
+        help="Test only the first N bytes instead of the whole device.",
+    ),
+    seed: int = typer.Option(
+        0, "--seed", help="Pattern seed; change it to re-test with fresh data."
+    ),
 ) -> None:
-    """Run a destructive full-span write+verify test (coming soon)."""
+    """Run a destructive full-span write+verify test."""
 
     command_name = "full-capacity-test"
     try:
@@ -1629,6 +1642,13 @@ def full_capacity_test(
                     "device": target_device.path,
                     "force": force,
                     "confirmed": actual_yes,
+                    "block_size": block_size,
+                    "span_bytes": (
+                        min(target_device.size_bytes, limit_bytes)
+                        if limit_bytes is not None
+                        else target_device.size_bytes
+                    ),
+                    "seed": seed,
                 },
                 actual_output,
                 force=force,
@@ -1638,7 +1658,12 @@ def full_capacity_test(
 
         _assert_device_safe(ctx, target_device, force, confirmed=actual_yes)
         payload = full_capacity.run_full_capacity(
-            target_device, force=force, yes=actual_yes
+            target_device,
+            force=force,
+            yes=actual_yes,
+            block_size=block_size,
+            limit_bytes=limit_bytes,
+            seed=seed,
         )
         status: Literal["ok", "fail"] = payload.get("status", "ok")
         default_message = (
