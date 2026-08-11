@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 from datetime import datetime, timezone
 from pathlib import Path
 
 from tfqa.core.errors import ArgumentError
-from tfqa.core.models import DeviceInfo, RunContext
+from tfqa.core.models import DeviceInfo, EnduranceConfig, RunContext
 from tfqa.orchestration.pipeline import (
     DEFAULT_STAGE_ORDER,
     PipelineStage,
@@ -74,6 +75,42 @@ class TestEnduranceIsDestructiveInAPlan(unittest.TestCase):
         self.assertFalse(
             pipeline_mod.plan_is_destructive(["health", "filesystem-check"])
         )
+
+
+class TestTheEnduranceStageHonoursTheProfile(unittest.TestCase):
+    def test_max_mismatches_reaches_the_engine(self) -> None:
+        # Dropped from the stage config, a profile's value was silently
+        # replaced by the default, so the same profile behaved differently
+        # under `pipeline` than under `endurance`.
+        profile = EnduranceProfile(
+            name="p", duration_seconds=1.0, pass_count=1, max_mismatches=3
+        )
+        captured: dict[str, EnduranceConfig] = {}
+
+        def fake_run(ctx, config, progress=None):  # type: ignore[no-untyped-def]
+            captured["config"] = config
+            raise ArgumentError(message="stop here", details={})
+
+        context = RunContext(
+            run_id="test-run",
+            started_at=datetime.now(timezone.utc),
+            device=DeviceInfo(
+                path="/dev/sdz",
+                name="sdz",
+                size_bytes=1024,
+                is_removable=True,
+                is_system_disk=False,
+                mountpoints=[],
+            ),
+        )
+        stage = pipeline_mod.build_pipeline(profile, ["endurance"])[0]
+        with patch(
+            "tfqa.tests.endurance.simple.run_simple_endurance", side_effect=fake_run
+        ):
+            with self.assertRaises(ArgumentError):
+                stage.action(context)
+
+        self.assertEqual(captured["config"].max_mismatches, 3)
 
 
 class TestNormalizeStatus(unittest.TestCase):

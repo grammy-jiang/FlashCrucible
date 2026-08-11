@@ -23,6 +23,7 @@ import hashlib
 import os
 import random as random_mod
 import struct
+from collections.abc import Iterator
 from typing import Callable, Literal, NamedTuple, TypedDict, cast
 
 from tfqa.core.errors import ArgumentError
@@ -165,24 +166,36 @@ def block_offsets(
     block_size: int,
     order: WriteOrder = "sequential",
     seed: int = 0,
-) -> list[int]:
+) -> Iterator[int]:
     """The offsets a pass visits, in the order it visits them.
 
     A final chunk too small to carry the offset header is dropped: it could not
     be verified, so writing it would put data on the device that nothing can
     check.
 
-    Random order is shuffled from `seed`, so a run stays reproducible.
+    Sequential order is streamed rather than listed. A span of 64 GiB at the
+    smallest permitted block size is 4.3 billion offsets, and materialising
+    them would exhaust memory before the device was opened.
+
+    Random order has to hold them all -- a shuffle cannot be lazy -- so it
+    carries that cost by nature, and a caller asking for it on a huge span with
+    a tiny block is choosing it.
     """
 
-    offsets = [
-        offset
-        for offset in range(0, span, block_size)
-        if min(block_size, span - offset) >= HEADER.size
-    ]
     if order == "random":
+        offsets = [
+            offset
+            for offset in range(0, span, block_size)
+            if min(block_size, span - offset) >= HEADER.size
+        ]
         random_mod.Random(seed).shuffle(offsets)
-    return offsets
+        yield from offsets
+        return
+
+    for offset in range(0, span, block_size):
+        if min(block_size, span - offset) < HEADER.size:
+            return
+        yield offset
 
 
 def write_pass(
@@ -206,12 +219,17 @@ def write_pass(
     issues: list[str] = []
     warnings: list[str] = []
     written = 0
+    # Sequential writes advance the file position by themselves; seeking before
+    # each one would be a syscall per block for nothing.
+    seeking = order != "sequential"
+
     fd = os.open(path, os.O_WRONLY)
     try:
         for offset in block_offsets(span, block_size, order, seed):
             size = min(block_size, span - offset)
             try:
-                os.lseek(fd, offset, os.SEEK_SET)
+                if seeking:
+                    os.lseek(fd, offset, os.SEEK_SET)
                 os.write(fd, block_pattern(offset, size, seed))
             except OSError as exc:
                 # A fake card typically starts refusing writes at its real size.

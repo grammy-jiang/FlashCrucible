@@ -340,17 +340,17 @@ class TestWritePatterns:
     not happen -- and random and sequential stress a card differently."""
 
     def test_random_visits_every_block_exactly_once(self) -> None:
-        offsets = blockio.block_offsets(SPAN, BLOCK, "random", 7)
+        offsets = list(blockio.block_offsets(SPAN, BLOCK, "random", 7))
         assert sorted(offsets) == list(range(0, SPAN, BLOCK))
 
     def test_random_is_not_sequential(self) -> None:
-        assert blockio.block_offsets(SPAN, BLOCK, "random", 7) != list(
+        assert list(blockio.block_offsets(SPAN, BLOCK, "random", 7)) != list(
             range(0, SPAN, BLOCK)
         )
 
     def test_random_is_reproducible_from_the_seed(self) -> None:
-        assert blockio.block_offsets(SPAN, BLOCK, "random", 7) == blockio.block_offsets(
-            SPAN, BLOCK, "random", 7
+        assert list(blockio.block_offsets(SPAN, BLOCK, "random", 7)) == list(
+            blockio.block_offsets(SPAN, BLOCK, "random", 7)
         )
 
     def test_a_random_pass_still_verifies(self, tmp_path: Path) -> None:
@@ -359,6 +359,14 @@ class TestWritePatterns:
         result = _run(tmp_path, write_pattern="random")
         assert result.status == "ok"
         assert result.metrics["bytes_verified"] == SPAN * 2
+
+    def test_sequential_order_is_streamed_not_materialised(self) -> None:
+        # A 64 GiB span at the smallest permitted block size is 4.3 billion
+        # offsets; listing them would exhaust memory before the device was
+        # opened. Taking three from a huge span proves nothing was built.
+        from itertools import islice
+
+        assert list(islice(blockio.block_offsets(2**36, 16), 3)) == [0, 16, 32]
 
     def test_an_unsupported_pattern_is_refused(self, tmp_path: Path) -> None:
         device = _make_device(str(_target(tmp_path)))
@@ -396,6 +404,10 @@ class TestValidation:
             run_simple_endurance(ctx, EnduranceConfig(block_size=4))
         with pytest.raises(ArgumentError):
             run_simple_endurance(ctx, EnduranceConfig(limit_bytes=0))
+        # The profile loader already refuses this, so the engine must too --
+        # otherwise whether a value is legal depends on where it came from.
+        with pytest.raises(ArgumentError):
+            run_simple_endurance(ctx, EnduranceConfig(max_mismatches=0))
 
     def test_a_device_too_small_to_verify_is_refused(self, tmp_path: Path) -> None:
         # A block too small to carry the offset header cannot be checked, so

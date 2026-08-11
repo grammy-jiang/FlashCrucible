@@ -129,6 +129,15 @@ def validate_config(config: EnduranceConfig) -> None:
             details={"limit_bytes": config.limit_bytes},
         )
 
+    if config.max_mismatches <= 0:
+        raise ArgumentError(
+            message=(
+                "max-mismatches must be at least 1; zero would describe no "
+                "mismatch at all, and the profile loader already refuses it"
+            ),
+            details={"max_mismatches": config.max_mismatches},
+        )
+
     if config.write_pattern not in WRITE_PATTERNS:
         raise ArgumentError(
             message=(

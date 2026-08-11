@@ -217,6 +217,50 @@ class EnduranceCLITest(TestCase):
             "INVALID_ARGUMENT",
         )
 
+    def test_a_nonpositive_mismatch_limit_is_refused(self) -> None:
+        # The profile loader refuses it, so the CLI must too -- otherwise
+        # whether a value is legal depends on where it came from.
+        device = _make_device("/dev/sdz")
+        with patch("tfqa.core.devices.get_device", return_value=device):
+            invocation = self.runner.invoke(
+                app,
+                [
+                    "endurance",
+                    "--device",
+                    device.path,
+                    "--max-mismatches",
+                    "0",
+                    "--output",
+                    "json",
+                ],
+            )
+
+        self.assertNotEqual(invocation.exit_code, 0)
+        self.assertEqual(
+            CLIResponse.model_validate_json(invocation.stdout).error_code,
+            "INVALID_ARGUMENT",
+        )
+
+    def test_a_dry_run_refuses_it_too(self) -> None:
+        # A plan must never advertise settings the real invocation rejects.
+        device = _make_device("/dev/sdz")
+        with patch("tfqa.core.devices.get_device", return_value=device):
+            invocation = self.runner.invoke(
+                app,
+                [
+                    "--dry-run",
+                    "endurance",
+                    "--device",
+                    device.path,
+                    "--max-mismatches",
+                    "-1",
+                    "--output",
+                    "json",
+                ],
+            )
+
+        self.assertNotEqual(invocation.exit_code, 0)
+
     def test_endurance_cli_overrides_pass_config(self) -> None:
         device = _make_device("/dev/sdy", removable=False)
         profile_obj = EnduranceProfile(
