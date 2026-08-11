@@ -4,19 +4,23 @@ Writes a deterministic, offset-derived pattern across the whole device and
 reads it back. Because every block's content is a function of its own offset, a
 counterfeit card that silently wraps writes into a smaller physical area fails
 verification at the wrapped offsets, and the offset recorded in the block that
-*was* returned reveals where the write actually landed -- which gives an
-estimate of the real capacity.
+*was* returned reveals where the write actually landed.
 
 This replaces a stub that returned canned numbers (100% coverage, 120 MB/s)
 without touching the device.
 
-Two details matter for correctness:
+Details that matter for correctness:
 
 * The verify pass must not read from the page cache, or a fake card's writes
   would be served back from RAM and every card would pass. The cache is dropped
   with POSIX_FADV_DONTNEED and the device reopened before verifying.
+* Buffered writes hide media errors until fsync, so an fsync failure is a test
+  failure, not something to ignore.
 * Writing past a fake card's real capacity usually fails with EIO or ENOSPC.
   That is itself a positive detection, not an error to abort on.
+* A block is only called "wrapped" when it exactly matches the pattern written
+  for another offset. A header that merely decodes to a plausible integer is
+  not enough: a bad sector returning zeros decodes as offset 0.
 """
 
 from __future__ import annotations
@@ -25,7 +29,7 @@ import hashlib
 import os
 import struct
 import time
-from typing import Any, Callable, Literal, TypedDict
+from typing import Any, Callable, Literal, TypedDict, cast
 
 from tfqa.core.errors import RuntimeIOError
 from tfqa.core.models import DeviceInfo
@@ -61,6 +65,12 @@ def block_pattern(offset: int, size: int, seed: int) -> bytes:
     that came back actually belongs, which is what exposes a wrapping card.
     """
 
+    if size < _HEADER.size:
+        raise RuntimeIOError(
+            f"Block size must be at least {_HEADER.size} bytes to carry the "
+            "offset header",
+            {"size": size, "minimum": _HEADER.size},
+        )
     header = _HEADER.pack(offset, seed)
     body = hashlib.blake2b(header, digest_size=_DIGEST_SIZE).digest()
     filler = body * ((size - len(header)) // _DIGEST_SIZE + 1)
@@ -87,24 +97,31 @@ def _decode_offset(block: bytes, span: int | None = None) -> int | None:
     return offset
 
 
-def _drop_cache(fd: int) -> None:
-    """Ask the kernel to forget the pages we just wrote.
+def _flush_and_drop_cache(fd: int) -> str | None:
+    """Commit the writes and ask the kernel to forget the pages.
 
-    Without this the verify pass reads back from RAM and a counterfeit card
-    passes cleanly.
+    Returns a description of an fsync failure, or None. The flush is where a
+    device reports the media errors that buffered writes hid, so swallowing it
+    would let dirty pages satisfy the verify reads and the test pass even though
+    nothing reached the card.
+
+    Dropping the cache matters for the same reason: without it the verify pass
+    reads back from RAM and a counterfeit passes cleanly.
     """
 
+    error: str | None = None
     try:
         os.fsync(fd)
-    except OSError:
-        pass
+    except OSError as exc:
+        error = f"fsync failed: {exc.strerror or exc}"
     fadvise = getattr(os, "posix_fadvise", None)
     if fadvise is None:  # pragma: no cover - platform guard
-        return
+        return error
     try:
         fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
-    except OSError:  # pragma: no cover - best effort
+    except OSError:  # pragma: no cover - advisory only
         pass
+    return error
 
 
 def _write_pass(
@@ -122,6 +139,10 @@ def _write_pass(
     try:
         while written < span:
             size = min(block_size, span - written)
+            if size < _HEADER.size:
+                # A tail too small to carry the offset header cannot be
+                # verified; stop rather than write something uncheckable.
+                break
             try:
                 chunk = block_pattern(written, size, seed)
                 os.write(fd, chunk)
@@ -135,7 +156,12 @@ def _write_pass(
             written += size
             if progress:
                 progress(written, span)
-        _drop_cache(fd)
+        flush_error = _flush_and_drop_cache(fd)
+        if flush_error:
+            issues.append(
+                f"{flush_error} after {written} bytes; the device did not "
+                "commit the data it accepted"
+            )
     finally:
         os.close(fd)
     return written, issues
@@ -159,6 +185,8 @@ def _verify_pass(
         offset = 0
         while offset < span:
             size = min(block_size, span - offset)
+            if size < _HEADER.size:
+                break
             try:
                 actual = os.read(fd, size)
             except OSError as exc:
@@ -172,9 +200,18 @@ def _verify_pass(
             if actual != block_pattern(offset, size, seed):
                 if len(mismatches) < max_mismatches:
                     found = _decode_offset(actual, span)
+                    # A plausible integer in the header is not enough: a bad
+                    # sector returning zeros decodes as offset 0. Only call it a
+                    # wrap when the whole block is exactly what was written for
+                    # that other offset, otherwise it is ordinary corruption.
+                    is_wrap = (
+                        found is not None
+                        and found != offset
+                        and actual == block_pattern(found, size, seed)
+                    )
                     entry = Mismatch(offset=offset, expected_offset=offset)
-                    if found is not None and found != offset:
-                        entry["found_offset"] = found
+                    if is_wrap:
+                        entry["found_offset"] = cast(int, found)
                         entry["reason"] = (
                             "block holds data written for a different offset, "
                             "which is how a wrapping counterfeit behaves"
@@ -222,8 +259,11 @@ def run_full_capacity(
 ) -> FullCapacityResult:
     """Write a pattern across the device and verify it reads back intact."""
 
-    if block_size <= 0:
-        raise RuntimeIOError("Block size must be positive", {"block_size": block_size})
+    if block_size < _HEADER.size:
+        raise RuntimeIOError(
+            f"Block size must be at least {_HEADER.size} bytes",
+            {"block_size": block_size, "minimum": _HEADER.size},
+        )
 
     span = device.size_bytes
     if limit_bytes is not None:

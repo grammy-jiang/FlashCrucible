@@ -205,7 +205,15 @@ uv run tfqa --yes full-capacity-test --device /dev/sdX --force --limit-bytes $((
 - `--seed` — changes the pattern, so a re-test writes different data to the same offsets.
 
 The verify pass drops the page cache with `POSIX_FADV_DONTNEED` and reopens the device first.
-Without that the kernel would serve the writes back from RAM and every card would pass.
+Without that the kernel would serve the writes back from RAM and every card would pass. For the
+same reason an `fsync` failure is treated as a test failure: buffered writes hide media errors
+until the flush, so a device that accepted data it never committed must not be reported as passing.
+
+A block counts as *wrapped* only when it matches the pattern written for another offset exactly.
+A header that merely decodes to a plausible integer is not enough — a bad sector returning zeros
+decodes as offset 0, which is ordinary corruption rather than a counterfeit.
+
+`--block-size` must be at least 16 bytes, the size of the offset header each block carries.
 
 `details` reports `bytes_written`, `bytes_verified`, `tested_span_bytes`, `wrapped`, and up to
 `max_mismatches` entries naming the offset that failed and, where the header decodes to a plausible

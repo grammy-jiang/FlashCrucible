@@ -227,6 +227,28 @@ class CounterfeitDevice(TempDirCase):
         self.assertNotIn("found_offset", mismatches[0])
         self.assertIn("differ from the pattern", mismatches[0]["reason"])
 
+    def test_zeroed_block_is_corruption_not_a_wrap(self):
+        # A bad sector returning zeros decodes as offset 0. Classifying that as
+        # a wrap produced a "Fake capacity detected" verdict for what is
+        # ordinary corruption, so the whole block must match the pattern for
+        # that offset before it counts.
+        target = make_target(self.root)
+        result = full.run_full_capacity(
+            make_device(target), force=True, yes=True, block_size=BLOCK
+        )
+        self.assertEqual(result["status"], "ok")
+        with open(target, "r+b") as handle:
+            handle.seek(BLOCK)
+            handle.write(b"\x00" * BLOCK)
+
+        _verified, mismatches, _ = full._verify_pass(
+            str(target), SPAN, BLOCK, 0, 16, None
+        )
+
+        self.assertEqual(len(mismatches), 1)
+        self.assertNotIn("found_offset", mismatches[0])
+        self.assertIn("differ from the pattern", mismatches[0]["reason"])
+
 
 class Options(TempDirCase):
     def test_limit_bytes_shortens_the_span(self):
@@ -276,12 +298,44 @@ class Options(TempDirCase):
 
         self.assertEqual(len(mismatches), 2)
 
-    def test_zero_block_size_is_rejected(self):
+    def test_block_size_below_the_header_is_rejected(self):
+        # A block smaller than the 16-byte header cannot carry its own offset.
+        # `block_pattern` used to return the full header regardless, so a
+        # 1-byte block wrote 16 bytes while the caller counted one.
         target = make_target(self.root)
+        for block_size in (0, 1, 8, 15):
+            with self.subTest(block_size=block_size):
+                with pytest.raises(RuntimeIOError):
+                    full.run_full_capacity(
+                        make_device(target),
+                        force=True,
+                        yes=True,
+                        block_size=block_size,
+                    )
+
+    def test_block_pattern_never_exceeds_the_requested_size(self):
+        for size in (16, 17, 31, 32, 4096):
+            with self.subTest(size=size):
+                self.assertEqual(len(full.block_pattern(0, size, 0)), size)
         with pytest.raises(RuntimeIOError):
-            full.run_full_capacity(
-                make_device(target), force=True, yes=True, block_size=0
+            full.block_pattern(0, 15, 0)
+
+    def test_fsync_failure_is_reported(self):
+        # Buffered writes hide media errors until the flush. Swallowing it let
+        # cached pages satisfy the verify reads and the test return ok.
+        target = make_target(self.root)
+
+        def failing_fsync(_fd: int) -> None:
+            raise OSError(5, "Input/output error")
+
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            monkeypatch.setattr(os, "fsync", failing_fsync)
+            result = full.run_full_capacity(
+                make_device(target), force=True, yes=True, block_size=BLOCK
             )
+
+        self.assertEqual(result["status"], "fail")
+        self.assertTrue(any("fsync failed" in issue for issue in result["issues"]))
 
     def test_zero_capacity_is_rejected(self):
         target = make_target(self.root, size_bytes=BLOCK)
