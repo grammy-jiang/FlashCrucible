@@ -1,7 +1,6 @@
 # FlashCrucible
 
 [![CI](https://github.com/grammy-jiang/FlashCrucible/actions/workflows/ci.yml/badge.svg)](https://github.com/grammy-jiang/FlashCrucible/actions/workflows/ci.yml)
-[![Format](https://github.com/grammy-jiang/FlashCrucible/actions/workflows/format.yml/badge.svg)](https://github.com/grammy-jiang/FlashCrucible/actions/workflows/format.yml)
 [![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/grammy-jiang/FlashCrucible/blob/master/LICENSE)
 [![Linting: ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
@@ -259,20 +258,22 @@ Recognised environment variables: `TFQA_MODE`, `TFQA_LOG_DIR`, `TFQA_NON_INTERAC
 ## Development
 
 ```bash
-uv sync                          # create venv, install deps
-uv run pytest -q                 # 324 tests, ~1.5s
-uv run ruff check .              # lint
-uv run ruff format .             # format
-uv run mypy tfqa/ tests/         # type check
-uv run tfqa validate-schemas     # check the JSON schemas parse
+make install     # create the venv and install dependencies
+make verify      # everything CI runs
 ```
 
-CI runs all of these on every push and pull request. See [CONTRIBUTING.md](https://github.com/grammy-jiang/FlashCrucible/blob/master/CONTRIBUTING.md), and
-[AGENTS.md](https://github.com/grammy-jiang/FlashCrucible/blob/master/AGENTS.md) if you are an AI agent working in this repository.
+`make verify` covers lint, formatting, types, the tests, the same tests with every external tool
+hidden, and the shipped JSON schemas. `make help` lists the individual targets if you want one on
+its own; `make format` applies formatting and autofixes.
+
+CI runs `make verify`, so there is one definition of "green" and a local run cannot drift from it.
+See [CONTRIBUTING.md](https://github.com/grammy-jiang/FlashCrucible/blob/master/CONTRIBUTING.md),
+and [AGENTS.md](https://github.com/grammy-jiang/FlashCrucible/blob/master/AGENTS.md) if you are an
+AI agent working in this repository.
 
 The suite never touches real hardware. CLI tests use Typer's `CliRunner` with
-`unittest.mock.patch` to stub device access, and the engine tests write to temporary files
-standing in for block devices. It also passes with every external binary hidden from
+`unittest.mock.patch` to stub device access, and the engine tests write to temporary files standing
+in for block devices. `make test-hermetic` runs it again with every external binary hidden from
 `shutil.which`, so a missing `f3probe` or `fio` cannot make a test pass or fail by accident.
 
 ## Known limitations
