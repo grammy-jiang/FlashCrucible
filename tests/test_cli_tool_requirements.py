@@ -69,8 +69,13 @@ class TestDescribeDeclaresTools:
         assert described["required_tools"] == ["dd"]
         assert described["optional_tools"] == ["cmp"]
 
-    def test_endurance_says_it_is_not_implemented(self) -> None:
-        assert "NOT_IMPLEMENTED" in str(_describe("endurance")["degradation"])
+    def test_endurance_says_what_it_needs_for_wear_data(self) -> None:
+        # It measures now. What still degrades is the wear delta, which needs
+        # eMMC registers or sdmon -- and a caller has to know that the run can
+        # succeed while reporting no wear at all.
+        described = _describe("endurance")
+        assert "EXT_CSD" in str(described["degradation"])
+        assert set(cast(list[str], described["optional_tools"])) == {"mmc", "sdmon"}
 
     def test_pipeline_explains_that_a_stage_is_skipped(self) -> None:
         assert "skipped" in str(_describe("pipeline")["degradation"])

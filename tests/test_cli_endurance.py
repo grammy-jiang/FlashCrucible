@@ -102,6 +102,68 @@ class EnduranceCLITest(TestCase):
         self.assertEqual(response.data["profile"], "cli-profile")
         self.assertEqual(str(response.log_path), str(result.logs_path))
 
+    def test_human_output_names_the_passes_and_the_stop_reason(self) -> None:
+        # One summary line hides whether the card slowed down or started
+        # failing partway through, which is the whole result.
+        device = _make_device("/dev/sdz")
+        result = _build_result("ok", errors=0)
+        result.details = {
+            "summary": "Ran 2 of 2 pass(es) over 100 bytes; stopped because "
+            "pass count reached.",
+            "passes": [
+                {
+                    "index": 0,
+                    "bytes_written": 100,
+                    "write_throughput_mbps": 9.5,
+                    "mismatches": 0,
+                },
+                {
+                    "index": 1,
+                    "bytes_written": 100,
+                    "write_throughput_mbps": 4.1,
+                    "mismatches": 2,
+                },
+            ],
+        }
+        result.warnings = ["No wear data: nothing answered"]
+
+        with (
+            patch("tfqa.core.devices.get_device", return_value=device),
+            patch(
+                "tfqa.tests.endurance.simple.run_simple_endurance",
+                return_value=result,
+            ),
+        ):
+            invocation = self.runner.invoke(
+                app, ["endurance", "--device", device.path, "--force", "--yes"]
+            )
+
+        self.assertEqual(invocation.exit_code, 0, invocation.stdout)
+        self.assertIn("stopped because pass count reached", invocation.stdout)
+        self.assertIn("9.5 MB/s", invocation.stdout)
+        self.assertIn("4.1 MB/s", invocation.stdout)
+        self.assertIn("2 mismatch(es)", invocation.stdout)
+        self.assertIn("Warnings:", invocation.stdout)
+
+    def test_the_output_no_longer_calls_it_a_simulation(self) -> None:
+        # It writes to the card now. Calling a destructive run a simulation is
+        # the kind of wrong that gets a card wiped by someone being careful.
+        device = _make_device("/dev/sdz")
+        result = _build_result("ok", errors=0)
+        result.details = {"summary": "Ran 1 pass.", "passes": []}
+        with (
+            patch("tfqa.core.devices.get_device", return_value=device),
+            patch(
+                "tfqa.tests.endurance.simple.run_simple_endurance",
+                return_value=result,
+            ),
+        ):
+            invocation = self.runner.invoke(
+                app, ["endurance", "--device", device.path, "--force", "--yes"]
+            )
+
+        self.assertNotIn("simulation", invocation.stdout.lower())
+
     def test_endurance_cli_overrides_pass_config(self) -> None:
         device = _make_device("/dev/sdy", removable=False)
         profile_obj = EnduranceProfile(
@@ -115,7 +177,9 @@ class EnduranceCLITest(TestCase):
         result = _build_result("warning", errors=2)
         captured: dict[str, EnduranceConfig] = {}
 
-        def fake_run(ctx: Any, config: EnduranceConfig) -> ResultModel:
+        def fake_run(
+            ctx: Any, config: EnduranceConfig, progress: Any = None
+        ) -> ResultModel:
             captured["config"] = config
             return result
 
@@ -135,12 +199,13 @@ class EnduranceCLITest(TestCase):
                     "--passes",
                     "2",
                     "--force",
+                    "--yes",
                     "--output",
                     "json",
                 ],
             )
 
-        self.assertEqual(invocation.exit_code, 0)
+        self.assertEqual(invocation.exit_code, 0, invocation.stdout)
         response = CLIResponse.model_validate_json(invocation.stdout)
         self.assertEqual(response.status, "fail")
         config = captured["config"]

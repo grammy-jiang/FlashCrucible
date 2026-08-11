@@ -12,6 +12,10 @@ which `trends` never reads:
 | surface/scan        | coverage_percent, read_errors     | details.tool      |
 | endurance/simple    | bytes written, errors, throughput | nothing at all    |
 
+`endurance` is now implemented and measures for real -- see
+`tests/test_endurance_simple.py`. What it must never do is reintroduce a
+lifetime estimate, which is checked there.
+
 These tests pin the replacement contract for all of them at once, so a new
 engine cannot quietly reintroduce the pattern.
 """
@@ -27,7 +31,7 @@ from unittest.mock import patch
 import pytest
 
 from tfqa.core.errors import (
-    NotImplementedEngineError,
+    ArgumentError,
     RuntimeIOError,
     TFQAError,
     TimeoutError,
@@ -100,12 +104,15 @@ class TestEnginesRefuseWhenTheyCannotMeasure:
         ):
             surface_scan.run_surface_scan(DEVICE)
 
-    def test_endurance_is_not_implemented(self) -> None:
-        # No tool is missing here; the engine simply does no I/O.
-        with pytest.raises(NotImplementedEngineError):
-            endurance_simple.run_simple_endurance(
-                _context(), EnduranceConfig(duration_seconds=1.0, pass_count=1)
-            )
+    def test_endurance_refuses_a_device_it_cannot_verify(self) -> None:
+        # It is implemented now, so the question is no longer whether it
+        # refuses but whether it ever writes something it cannot check. A span
+        # smaller than the offset header is exactly that case.
+        tiny = DEVICE.model_copy(update={"size_bytes": 4})
+        context = _context()
+        context.device = tiny
+        with pytest.raises(ArgumentError):
+            endurance_simple.run_simple_endurance(context, EnduranceConfig())
 
 
 class TestNoSyntheticFallbacksRemain:
@@ -147,12 +154,13 @@ class TestNoSyntheticFallbacksRemain:
             )
             assert body[0].exc is None, "re-raise the original error unchanged"
 
-    def test_endurance_performs_no_device_io(self) -> None:
-        # If someone implements it for real, replace this with a test that
-        # checks the I/O actually happens.
+    def test_endurance_does_real_device_io(self) -> None:
+        # The inverse of the test this replaces. While the engine was a stub
+        # the guard was "it must not touch the device"; now that it measures,
+        # the guard is that its numbers come from somewhere real.
         source = inspect.getsource(endurance_simple)
-        for primitive in ("os.write(", "os.open(", "subprocess."):
-            assert primitive not in source
+        assert "os.write(" in source
+        assert "os.open(" in source
 
 
 class TestPipelineRecordsSkippedNotOk:
@@ -181,12 +189,18 @@ class TestPipelineRecordsSkippedNotOk:
         assert result.status == "skipped"
         assert result.metrics == {}
 
-    def test_endurance_stage_is_skipped(self) -> None:
-        stage = pipeline_mod.build_pipeline(PROFILE, ["endurance"])[0]
-        (result,) = pipeline_mod.run_pipeline(_context(), [stage])
+    def test_a_capability_gap_still_becomes_skipped(self) -> None:
+        # `endurance` used to be this test's subject because it always raised
+        # NotImplementedEngineError. It measures now, so the surviving cases
+        # are the tool-dependent engines above; this pins the shape they share.
+        result = self._run(
+            "surface-scan",
+            "tfqa.ext.badblocks.run_badblocks_readonly",
+            ToolNotFoundError("badblocks"),
+        )
 
         assert result.status == "skipped"
-        assert result.details["error_code"] == "NOT_IMPLEMENTED"
+        assert result.details["error_code"] == "EXT_TOOL_MISSING"
         assert result.metrics == {}
 
     def test_a_real_failure_is_not_disguised_as_skipped(self) -> None:
@@ -231,7 +245,8 @@ class TestPipelineRecordsSkippedNotOk:
     def test_a_skipped_stage_contributes_no_metrics_to_trends(self) -> None:
         # The whole point: an unavailable engine must not put a number into the
         # history that `trends` would then average.
-        stage = pipeline_mod.build_pipeline(PROFILE, ["endurance"])[0]
-        (result,) = pipeline_mod.run_pipeline(_context(), [stage])
+        result = self._run(
+            "performance", "tfqa.ext.fio.run_fio_job", ToolNotFoundError("fio")
+        )
 
         assert not result.metrics

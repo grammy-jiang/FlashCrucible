@@ -55,10 +55,6 @@ GUARD_EXEMPT = {
         "writes through a mounted filesystem, so requiring an unmounted device "
         "would make it impossible to run"
     ),
-    "endurance": (
-        "performs no device I/O while unimplemented; guarding it would answer "
-        "DEVICE_UNSAFE instead of NOT_IMPLEMENTED"
-    ),
 }
 
 # Likewise for --dry-run: only commands that do no work are excused.
@@ -382,18 +378,20 @@ def _engine_refuses() -> bool:
 class TestEnduranceExemptionExpires:
     """`endurance` is exempt only while it cannot write. Both ways.
 
-    Four separate places assert the command is safe, and every one of them is
-    conditional on the engine being unimplemented: the `describe` metadata, the
-    absent `_assert_device_safe` call, the `check_safety=False` plan, and the
-    `GUARD_EXEMPT` entry below. Nothing else makes them change together, so an
-    implementer could add the engine, leave all four untouched, and ship a
-    destructive command that reports itself as read-only -- to `describe`, and
+    Four separate places used to assert the command was safe, each conditional
+    on the engine being unimplemented: the `describe` metadata, the absent
+    `_assert_device_safe` call, the `check_safety=False` plan, and a
+    `GUARD_EXEMPT` entry. Nothing made them change together, so an implementer
+    could have added the engine, left all four untouched, and shipped a
+    destructive command reporting itself as read-only -- to `describe`, and
     therefore to the generated MCP tool descriptions.
 
-    Every assertion here is written in both directions. A one-directional check
-    would let the exemptions be removed early, leaving `endurance` answering
-    DEVICE_UNSAFE on a mounted card instead of the NOT_IMPLEMENTED that
-    actually explains the situation.
+    The engine is implemented now and all four are flipped, so these assertions
+    read in the other direction. They are kept because they still bite: unwire
+    the guard, or set `destructive: False` again, and the pairing breaks.
+
+    Every assertion is written both ways, which is what lets the class survive
+    the transition it was written for without being edited.
     """
 
     WIRING = (

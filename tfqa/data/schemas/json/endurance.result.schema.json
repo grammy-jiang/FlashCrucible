@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://flashcrucible.local/schemas/endurance.result.schema.json",
   "title": "tfqa endurance result",
-  "description": "Endurance run. The engine is unimplemented and refuses. Validates the whole CLIResponse for `tfqa endurance`. The shape of `data` depends on `status`, so it is constrained conditionally: an error response carries `details` or nothing.",
+  "description": "Repeated destructive write-and-verify passes. Validates the whole CLIResponse for `tfqa endurance`. The shape of `data` depends on `status`, so it is constrained conditionally: an error response carries `details` or nothing.",
   "schema_version": 2,
   "type": "object",
   "required": [
@@ -95,7 +95,77 @@
                         }
                       },
                       "details": {
-                        "type": "object"
+                        "type": "object",
+                        "description": "Per-pass measurements, the stop reason, and the wear delta.",
+                        "properties": {
+                          "stopped_because": {
+                            "type": "string"
+                          },
+                          "span_bytes": {
+                            "type": "integer"
+                          },
+                          "wrapped": {
+                            "type": "boolean"
+                          },
+                          "passes": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "required": [
+                                "index",
+                                "bytes_written",
+                                "mismatches"
+                              ],
+                              "properties": {
+                                "index": {
+                                  "type": "integer"
+                                },
+                                "bytes_written": {
+                                  "type": "integer"
+                                },
+                                "bytes_verified": {
+                                  "type": "integer"
+                                },
+                                "mismatches": {
+                                  "type": "integer"
+                                },
+                                "wrapped": {
+                                  "type": "boolean"
+                                },
+                                "duration_seconds": {
+                                  "type": "number"
+                                },
+                                "write_throughput_mbps": {
+                                  "type": "number"
+                                },
+                                "verify_throughput_mbps": {
+                                  "type": "number"
+                                },
+                                "issues": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              "additionalProperties": true
+                            }
+                          },
+                          "wear": {
+                            "type": "object",
+                            "description": "The card's own counters before and after, or available:false with the reason. Never an estimate.",
+                            "required": [
+                              "available"
+                            ],
+                            "properties": {
+                              "available": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": true
+                          }
+                        },
+                        "additionalProperties": true
                       },
                       "warnings": {
                         "type": "array",
@@ -160,6 +230,26 @@
                       }
                     },
                     "additionalProperties": true
+                  }
+                },
+                "additionalProperties": true
+              },
+              {
+                "type": "object",
+                "description": "Emitted by --detach: the run was started in the background and has produced no result yet. Poll `tfqa status <run_id>` for the outcome.",
+                "required": [
+                  "run_id",
+                  "detached"
+                ],
+                "properties": {
+                  "run_id": {
+                    "type": "string"
+                  },
+                  "pid": {
+                    "type": "integer"
+                  },
+                  "detached": {
+                    "const": true
                   }
                 },
                 "additionalProperties": true

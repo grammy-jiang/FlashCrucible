@@ -30,6 +30,17 @@ class EnduranceConfig:
     pass_count: int = 5
     force: bool = False
     write_pattern: str = "sequential"
+    #: Bytes per I/O chunk. Every block carries an offset header, so it cannot
+    #: be smaller than that header.
+    block_size: int = 1024 * 1024
+    #: Bound the span for a shorter run. None means the whole device.
+    limit_bytes: int | None = None
+    #: Base for the per-pass pattern seed. Fixed by default so a run is
+    #: reproducible.
+    seed: int = 0
+    #: How many mismatching blocks to describe per pass. The *count* is never
+    #: capped -- only the detail, which stops saying anything new.
+    max_mismatches: int = 8
 
     def with_overrides(self, **overrides: Any) -> "EnduranceConfig":
         if not overrides:
